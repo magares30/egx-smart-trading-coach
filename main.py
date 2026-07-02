@@ -1046,6 +1046,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Run Telegram interactive bot (reads latest saved report JSON)",
     )
     parser.add_argument(
+        "--egx-cloud-readiness-check",
+        action="store_true",
+        help="Verify Cloud Run dependencies, paths, and report command (no report run)",
+    )
+    parser.add_argument(
         "--backtest",
         action="store_true",
         help="Run daily backtest simulation after market analysis",
@@ -3498,6 +3503,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if cli_args.show_egx_symbol_mapping:
         return run_show_egx_symbol_mapping()
+
+    if cli_args.egx_cloud_readiness_check:
+        from core.cloud_readiness import run_cloud_readiness_check
+
+        return run_cloud_readiness_check()
 
     if cli_args.market_hours_status:
         return run_market_hours_status(
