@@ -1,0 +1,186 @@
+"""Tests for on-demand cloud report runner."""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+from core.cloud_report_runner import (
+    REPORT_ALREADY_RUNNING_MESSAGE,
+    REPORT_FAILURE_PREFIX,
+    REPORT_STARTING_MESSAGE,
+    REPORT_SUCCESS_FOOTER,
+    REPORT_TIMEOUT_MESSAGE,
+    ReportRunLock,
+    ReportRunResult,
+    build_default_report_command,
+    format_report_run_telegram_message,
+    report_run_lock,
+    run_report_once,
+)
+from core.telegram_bot import BTN_REFRESH_REPORT, build_main_menu
+
+
+def test_build_default_report_command() -> None:
+    command = build_default_report_command(Path("/app"))
+
+    assert command[1].endswith("main.py")
+    assert "--egx-workflow" in command
+    assert "report" in command
+    assert "--data-provider" in command
+    assert "tradingview" in command
+    assert "--scanner-universe" in command
+    assert "full-market" in command
+    assert "--top-candidates" in command
+    assert "10" in command
+    assert "--min-score" in command
+    assert "75" in command
+
+
+@patch("core.cloud_report_runner.subprocess.run")
+def test_run_report_once_success(mock_run: MagicMock, tmp_path: Path) -> None:
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    report_path = reports_dir / "egx_daily_report_20260703_120000.json"
+    report_path.write_text('{"report_date": "2026-07-03"}', encoding="utf-8")
+
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=["python", "main.py"],
+        returncode=0,
+        stdout="report saved",
+        stderr="",
+    )
+
+    with patch("core.cloud_report_runner.settings.REPORTS_DIR", reports_dir):
+        result = run_report_once(
+            project_root=tmp_path,
+            command=["python", "main.py", "--egx-workflow", "report"],
+        )
+
+    assert result.success is True
+    assert result.returncode == 0
+    assert result.latest_report_path == str(report_path)
+
+
+@patch("core.cloud_report_runner.subprocess.run")
+def test_run_report_once_failure(mock_run: MagicMock, tmp_path: Path) -> None:
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=["python", "main.py"],
+        returncode=1,
+        stdout="",
+        stderr="TradingView fetch failed",
+    )
+
+    with patch("core.cloud_report_runner.settings.REPORTS_DIR", tmp_path / "reports"):
+        result = run_report_once(
+            project_root=tmp_path,
+            command=["python", "main.py", "--egx-workflow", "report"],
+        )
+
+    assert result.success is False
+    assert result.returncode == 1
+    assert "TradingView fetch failed" in result.stderr_tail
+
+
+@patch("core.cloud_report_runner.subprocess.run")
+def test_run_report_once_timeout(mock_run: MagicMock, tmp_path: Path) -> None:
+    mock_run.side_effect = subprocess.TimeoutExpired(
+        cmd=["python", "main.py"],
+        timeout=300,
+        output="partial",
+        stderr="still working",
+    )
+
+    result = run_report_once(
+        project_root=tmp_path,
+        command=["python", "main.py", "--egx-workflow", "report"],
+        timeout_seconds=300,
+    )
+
+    assert result.success is False
+    assert result.error == "timeout"
+
+
+def test_report_run_lock_prevents_concurrent_runs() -> None:
+    lock = ReportRunLock()
+
+    assert lock.try_acquire() is True
+    assert lock.try_acquire() is False
+    lock.release()
+    assert lock.try_acquire() is True
+    lock.release()
+
+
+def test_global_report_run_lock_is_singleton() -> None:
+    assert report_run_lock.try_acquire() is True
+    assert report_run_lock.try_acquire() is False
+    report_run_lock.release()
+
+
+def test_format_report_run_success_message() -> None:
+    result = ReportRunResult(
+        success=True,
+        returncode=0,
+        stdout_tail="ok",
+        stderr_tail="",
+        error=None,
+        latest_report_path="/tmp/report.json",
+    )
+
+    message = format_report_run_telegram_message(result, overview_text="📅 التاريخ: 2026-07-03")
+
+    assert "📅 التاريخ: 2026-07-03" in message
+    assert REPORT_SUCCESS_FOOTER in message
+
+
+@patch("core.cloud_report_runner.subprocess.run")
+def test_run_report_once_redacts_sensitive_stderr(mock_run: MagicMock, tmp_path: Path) -> None:
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=["python", "main.py"],
+        returncode=1,
+        stdout="",
+        stderr="TELEGRAM_BOT_TOKEN=secret-value\nTradingView fetch failed",
+    )
+
+    with patch("core.cloud_report_runner.settings.REPORTS_DIR", tmp_path / "reports"):
+        result = run_report_once(
+            project_root=tmp_path,
+            command=["python", "main.py", "--egx-workflow", "report"],
+        )
+
+    assert "secret-value" not in result.stderr_tail
+    assert "TradingView fetch failed" in result.stderr_tail
+
+
+def test_format_report_run_failure_and_timeout_messages() -> None:
+    failure = ReportRunResult(
+        success=False,
+        returncode=1,
+        stdout_tail="",
+        stderr_tail="fetch failed",
+        error="returncode=1",
+        latest_report_path=None,
+    )
+    timeout = ReportRunResult(
+        success=False,
+        returncode=None,
+        stdout_tail="",
+        stderr_tail="",
+        error="timeout",
+        latest_report_path=None,
+    )
+
+    assert REPORT_FAILURE_PREFIX in format_report_run_telegram_message(failure)
+    assert format_report_run_telegram_message(timeout) == REPORT_TIMEOUT_MESSAGE
+
+
+def test_main_menu_includes_refresh_report_button() -> None:
+    labels = {button.text for row in build_main_menu().keyboard for button in row}
+
+    assert BTN_REFRESH_REPORT in labels
+
+
+def test_refresh_report_messages_are_defined() -> None:
+    assert "استنى" in REPORT_STARTING_MESSAGE
+    assert "استنى" in REPORT_ALREADY_RUNNING_MESSAGE

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from config import settings
+from core.cloud_report_runner import find_latest_report_json
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ TELEGRAM_ALLOWED_CHAT_ID_ENV = "TELEGRAM_ALLOWED_CHAT_ID"
 CALLBACK_WHY_PREFIX = "why:"
 
 NO_REPORT_MESSAGE = (
-    "لسه مفيش تقرير محفوظ. شغّل التقرير الأول من البرنامج وبعدين ارجعلي."
+    "لسه مفيش تقرير محفوظ. اضغط 🔄 حدّث التقرير دلوقتي."
 )
 UNAUTHORIZED_MESSAGE = "مش مسموح ليك تستخدم البوت ده."
 WHY_PROMPT_MESSAGE = "اكتب رمز السهم كده: WHY ELKA"
@@ -31,6 +32,7 @@ SELL_ONLY_EMPTY_MESSAGE = "مفيش إشارات بيع أو مراجعة خرو
 HOT_SECTORS_EMPTY_MESSAGE = "مفيش بيانات قطاعات كفاية في آخر تقرير."
 
 BTN_DAILY = "📊 تقرير النهارده"
+BTN_REFRESH_REPORT = "🔄 حدّث التقرير دلوقتي"
 BTN_OPPORTUNITIES = "🔥 الفرص"
 BTN_SELL_PORTFOLIO = "🚨 البيع والمحفظة"
 BTN_MARKET_MENU = "📈 السوق"
@@ -52,6 +54,7 @@ BTN_ULTRA_SHORT = "🧾 نسخة مختصرة"
 
 MAIN_MENU_BUTTONS = (
     BTN_DAILY,
+    BTN_REFRESH_REPORT,
     BTN_OPPORTUNITIES,
     BTN_SELL_PORTFOLIO,
     BTN_MARKET_MENU,
@@ -97,7 +100,6 @@ _CANDIDATE_HEADER_RE = re.compile(
     r"^\d+\.\s+(?P<symbol>[A-Z0-9]+)\s+\|\s+Score\s+(?P<score>\d+)"
 )
 _SCORE_FROM_HEADER_RE = re.compile(r"Score\s+(?P<score>\d+)", re.IGNORECASE)
-_REPORT_FILENAME_RE = re.compile(r"egx_daily_report_(\d{8})_(\d{6})\.json$")
 
 
 def get_bot_token() -> str | None:
@@ -114,34 +116,6 @@ def is_chat_authorized(chat_id: int, allowed_chat_id: str | None) -> bool:
     if not allowed_chat_id:
         return True
     return str(chat_id) == allowed_chat_id.strip()
-
-
-def find_latest_report_json(reports_dir: Path) -> Path | None:
-    """Return the newest saved daily report JSON path, if any."""
-    target_dir = Path(reports_dir)
-    if not target_dir.is_dir():
-        return None
-
-    candidates = [
-        path
-        for path in target_dir.glob("egx_daily_report_*.json")
-        if path.is_file()
-    ]
-    if not candidates:
-        return None
-
-    parseable = [path for path in candidates if _REPORT_FILENAME_RE.match(path.name)]
-    if parseable:
-        return max(parseable, key=_report_filename_sort_key)
-
-    return max(candidates, key=lambda path: path.stat().st_mtime)
-
-
-def _report_filename_sort_key(path: Path) -> tuple[str, str, str]:
-    match = _REPORT_FILENAME_RE.match(path.name)
-    if match is None:
-        return ("", "", path.name)
-    return (match.group(1), match.group(2), path.name)
 
 
 def load_latest_report_payload(
@@ -165,7 +139,7 @@ def build_main_menu():
 
     return ReplyKeyboardMarkup(
         [
-            [KeyboardButton(BTN_DAILY)],
+            [KeyboardButton(BTN_DAILY), KeyboardButton(BTN_REFRESH_REPORT)],
             [KeyboardButton(BTN_OPPORTUNITIES), KeyboardButton(BTN_SELL_PORTFOLIO)],
             [KeyboardButton(BTN_MARKET_MENU), KeyboardButton(BTN_WHY)],
             [KeyboardButton(BTN_WARNINGS), KeyboardButton(BTN_HELP)],
@@ -779,6 +753,7 @@ def format_help() -> str:
             "ℹ️ مساعدة:",
             "",
             f"{BTN_DAILY} — ملخص سريع لآخر تقرير",
+            f"{BTN_REFRESH_REPORT} — يشغّل تقرير EGX من السيرفر",
             f"{BTN_OPPORTUNITIES} — {BTN_BEST_THREE} / {BTN_BEST} / {BTN_NEXT_SESSION}",
             f"{BTN_SELL_PORTFOLIO} — {BTN_SELL} / {BTN_SELL_ONLY} / {BTN_PORTFOLIO} / {BTN_PNL}",
             f"{BTN_MARKET_MENU} — {BTN_MARKET} / {BTN_HOT_SECTORS} / {BTN_ULTRA_SHORT}",
@@ -959,6 +934,17 @@ def validate_telegram_bot_startup() -> str | None:
 
 def run_telegram_bot() -> int:
     """Start the Telegram bot polling loop."""
+    import asyncio
+
+    from core.cloud_report_runner import (
+        REPORT_ALREADY_RUNNING_MESSAGE,
+        REPORT_STARTING_MESSAGE,
+        ReportRunResult,
+        format_report_run_telegram_message,
+        report_run_lock,
+        run_report_once,
+    )
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -1061,6 +1047,48 @@ def run_telegram_bot() -> int:
 
         if text == BTN_DAILY:
             await _reply(update, format_daily_overview(payload))
+        elif text == BTN_REFRESH_REPORT:
+            if not report_run_lock.try_acquire():
+                await _reply(update, REPORT_ALREADY_RUNNING_MESSAGE)
+                return
+
+            await _reply(update, REPORT_STARTING_MESSAGE)
+            chat_id = update.effective_chat.id
+            bot = context.bot
+
+            async def _run_cloud_report() -> None:
+                try:
+                    result = await asyncio.to_thread(run_report_once)
+                    overview = format_daily_overview(load_latest_report_payload())
+                    message = format_report_run_telegram_message(
+                        result,
+                        overview_text=overview,
+                    )
+                    await bot.send_message(
+                        chat_id,
+                        message,
+                        reply_markup=build_main_menu(),
+                    )
+                except Exception:
+                    logger.exception("Cloud report background task failed.")
+                    await bot.send_message(
+                        chat_id,
+                        format_report_run_telegram_message(
+                            ReportRunResult(
+                                success=False,
+                                returncode=None,
+                                stdout_tail="",
+                                stderr_tail="",
+                                error="unexpected_error",
+                                latest_report_path=None,
+                            )
+                        ),
+                        reply_markup=build_main_menu(),
+                    )
+                finally:
+                    report_run_lock.release()
+
+            asyncio.create_task(_run_cloud_report())
         elif text == BTN_OPPORTUNITIES:
             await update.message.reply_text(
                 "🔥 قائمة الفرص:",

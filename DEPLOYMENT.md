@@ -7,7 +7,8 @@ It does **not** deploy anything automatically.
 
 - Container entrypoint: `python main.py --telegram-bot`
 - Health endpoints: `/` and `/health` on `PORT` (default `8080`)
-- Report source in V1: latest JSON under `data/reports/` inside the container
+- On-demand report button in Telegram: `🔄 حدّث التقرير دلوقتي`
+- Report source: latest JSON under `data/reports/` inside the container runtime
 - Paper trading only; no broker APIs; no real execution
 
 ## Required environment variables
@@ -39,7 +40,9 @@ python main.py --egx-workflow report --data-provider tradingview --scanner-unive
 - `.dockerignore` excludes local caches, secrets, and report JSON/TXT artifacts
 - Health server starts in a background thread before Telegram polling
 - Missing `TELEGRAM_BOT_TOKEN` exits with a clear error and does not print the token
-- If no saved report JSON exists in the container, the bot replies in Arabic that no report is available yet
+- If no saved report JSON exists yet, use `🔄 حدّث التقرير دلوقتي` from Telegram
+- On-demand report command inside the container:
+  `python main.py --egx-workflow report --data-provider tradingview --scanner-universe full-market --top-candidates 10 --min-score 75`
 
 ## Build image locally (manual)
 
@@ -74,7 +77,7 @@ Recommended for production:
 
 - Store `TELEGRAM_BOT_TOKEN` in Secret Manager instead of plain env vars
 - Set `TELEGRAM_ALLOWED_CHAT_ID` to restrict access
-- Use `--min-instances 1` only if you need always-on polling behavior
+- Use `--min-instances 1` for Telegram polling and on-demand local reports in V1
 
 Example region placeholder: `europe-west1`
 
@@ -95,7 +98,17 @@ Example region placeholder: `europe-west1`
 
 ## V1 report storage limitation
 
-In this patch, the container does not ship local `data/reports/*.json` files.
-After deployment, run the report workflow separately and copy/upload reports in a later patch, or mount/sync storage when Cloud Storage support is added.
+Reports generated from `🔄 حدّث التقرير دلوقتي` are saved inside the Cloud Run container under:
 
-Until then, the bot will respond normally but report-based menu answers will say no saved report is available.
+- `data/reports/`
+- `data/real/`
+- `storage/`
+
+These files are **temporary/ephemeral**. They may disappear when the Cloud Run instance restarts or scales.
+
+Persistent Cloud Storage / Firestore sync will come in a later patch.
+
+Until persistent storage is added:
+
+- Keep `--min-instances 1` if you want reports to survive longer on one warm instance
+- Expect report menus to reset after cold starts until the user presses `🔄 حدّث التقرير دلوقتي` again
