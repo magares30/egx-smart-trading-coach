@@ -22,6 +22,7 @@ REPORT_SUCCESS_FOOTER = "التقرير اتحدّث من السيرفر ✅"
 REPORT_TIMEOUT_MESSAGE = "التقرير خد وقت زيادة ومكملش. جرّبه تاني بعد شوية."
 REPORT_FAILURE_PREFIX = "التقرير فشل من السيرفر. السبب اتسجل في اللوج بشكل آمن."
 REDACTED_TELEGRAM_TOKEN = "[REDACTED_TELEGRAM_TOKEN]"
+CLOUD_REPORT_FAILURE_MARKER = "CLOUD_REPORT_FAILURE_DETAILS"
 
 _REPORT_FILENAME_RE = re.compile(r"egx_daily_report_(\d{8})_(\d{6})\.json$")
 _BOT_TOKEN_PATTERN = re.compile(r"bot\d+:[A-Za-z0-9_-]+", re.IGNORECASE)
@@ -164,6 +165,31 @@ def _sanitize_command_for_log(command: list[str]) -> str:
     return sanitize_log_text(" ".join(command))
 
 
+def build_cloud_report_failure_log_message(
+    *,
+    command: list[str],
+    returncode: int | None,
+    stdout: str | None,
+    stderr: str | None,
+) -> str:
+    """Build one sanitized multiline failure log block for Cloud Run."""
+    safe_command = _sanitize_command_for_log(command)
+    safe_stdout = _prepare_output_tail(stdout) or "<empty>"
+    safe_stderr = _prepare_output_tail(stderr) or "<empty>"
+    if returncode is None:
+        return_code = "timeout"
+    else:
+        return_code = str(returncode)
+
+    return (
+        f"{CLOUD_REPORT_FAILURE_MARKER}\n"
+        f"command={safe_command}\n"
+        f"return_code={return_code}\n"
+        f"stdout_tail=\n{safe_stdout}\n"
+        f"stderr_tail=\n{safe_stderr}"
+    )
+
+
 def _log_report_failure_diagnostics(
     *,
     command: list[str],
@@ -171,19 +197,13 @@ def _log_report_failure_diagnostics(
     stdout: str | None,
     stderr: str | None,
 ) -> None:
-    safe_command = _sanitize_command_for_log(command)
-    safe_stdout = _prepare_output_tail(stdout)
-    safe_stderr = _prepare_output_tail(stderr)
     logger.warning(
-        "Cloud report command failed.\n"
-        "Command: %s\n"
-        "Return code: %s\n"
-        "Stdout tail:\n%s\n"
-        "Stderr tail:\n%s",
-        safe_command,
-        returncode,
-        safe_stdout or "(empty)",
-        safe_stderr or "(empty)",
+        build_cloud_report_failure_log_message(
+            command=command,
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
+        )
     )
 
 

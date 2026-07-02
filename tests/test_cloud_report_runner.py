@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from core.cloud_report_runner import (
+    CLOUD_REPORT_FAILURE_MARKER,
     REDACTED_TELEGRAM_TOKEN,
     REPORT_ALREADY_RUNNING_MESSAGE,
     REPORT_FAILURE_PREFIX,
@@ -16,6 +20,7 @@ from core.cloud_report_runner import (
     ReportRunLock,
     ReportRunResult,
     build_default_report_command,
+    build_cloud_report_failure_log_message,
     format_report_run_telegram_message,
     report_run_lock,
     run_report_once,
@@ -67,6 +72,70 @@ def test_build_default_report_command() -> None:
     assert "10" in command
     assert "--min-score" in command
     assert "75" in command
+
+
+def test_build_cloud_report_failure_log_message_format() -> None:
+    message = build_cloud_report_failure_log_message(
+        command=["python", "main.py", "--egx-workflow", "report"],
+        returncode=1,
+        stdout="line on stdout",
+        stderr="TradingView fetch failed",
+    )
+
+    assert CLOUD_REPORT_FAILURE_MARKER in message
+    assert "command=python main.py --egx-workflow report" in message
+    assert "return_code=1" in message
+    assert "stdout_tail=\nline on stdout" in message
+    assert "stderr_tail=\nTradingView fetch failed" in message
+
+
+def test_build_cloud_report_failure_log_message_redacts_tokens() -> None:
+    message = build_cloud_report_failure_log_message(
+        command=["python", "main.py"],
+        returncode=1,
+        stdout="",
+        stderr="TELEGRAM_BOT_TOKEN=123456789:AAFakeTokenValue",
+    )
+
+    assert "AAFakeTokenValue" not in message
+    assert f"TELEGRAM_BOT_TOKEN={REDACTED_TELEGRAM_TOKEN}" in message
+
+
+@patch("core.cloud_report_runner.subprocess.run")
+def test_run_report_once_failure_emits_single_warning_log_block(
+    mock_run: MagicMock,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=["python", "main.py"],
+        returncode=1,
+        stdout="stdout error details",
+        stderr="TradingView fetch failed",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="core.cloud_report_runner"):
+        with patch("core.cloud_report_runner.settings.REPORTS_DIR", tmp_path / "reports"):
+            run_report_once(
+                project_root=tmp_path,
+                command=["python", "main.py", "--egx-workflow", "report"],
+            )
+
+    failure_records = [
+        record
+        for record in caplog.records
+        if record.levelname == "WARNING"
+        and CLOUD_REPORT_FAILURE_MARKER in record.getMessage()
+    ]
+    assert len(failure_records) == 1
+
+    log_message = failure_records[0].getMessage()
+    assert "return_code=1" in log_message
+    assert "stdout_tail=" in log_message
+    assert "stderr_tail=" in log_message
+    assert "stdout error details" in log_message
+    assert "TradingView fetch failed" in log_message
+    assert "AAFakeToken" not in log_message
 
 
 @patch("core.cloud_report_runner.subprocess.run")
