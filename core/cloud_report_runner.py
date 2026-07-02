@@ -20,16 +20,18 @@ REPORT_ALREADY_RUNNING_MESSAGE = "في تقرير بيتحدّث دلوقتي، 
 REPORT_STARTING_MESSAGE = "تمام، بحدّث التقرير دلوقتي من السيرفر... استنى دقيقة."
 REPORT_SUCCESS_FOOTER = "التقرير اتحدّث من السيرفر ✅"
 REPORT_TIMEOUT_MESSAGE = "التقرير خد وقت زيادة ومكملش. جرّبه تاني بعد شوية."
-REPORT_FAILURE_PREFIX = "التقرير فشل يتحدّث من السيرفر. هنبص على اللوج."
+REPORT_FAILURE_PREFIX = "التقرير فشل من السيرفر. السبب اتسجل في اللوج بشكل آمن."
+REDACTED_TELEGRAM_TOKEN = "[REDACTED_TELEGRAM_TOKEN]"
 
 _REPORT_FILENAME_RE = re.compile(r"egx_daily_report_(\d{8})_(\d{6})\.json$")
-_SENSITIVE_LOG_MARKERS = (
-    "token",
-    "api_key",
-    "api-key",
-    "secret",
-    "password",
-    "authorization",
+_BOT_TOKEN_PATTERN = re.compile(r"bot\d+:[A-Za-z0-9_-]+", re.IGNORECASE)
+_ENV_TOKEN_PATTERN = re.compile(
+    r"TELEGRAM_BOT_TOKEN\s*=\s*[^\s\"']+",
+    re.IGNORECASE,
+)
+_API_BOT_URL_PATTERN = re.compile(
+    r"https?://api\.telegram\.org/bot[^/\s\"']+",
+    re.IGNORECASE,
 )
 
 
@@ -136,19 +138,53 @@ def _tail_output(text: str | None, *, max_chars: int = OUTPUT_TAIL_MAX_CHARS) ->
     return cleaned[-max_chars:]
 
 
-def _sanitize_log_tail(text: str) -> str:
+def sanitize_log_text(text: str) -> str:
+    """Redact Telegram tokens and sensitive API URLs from log text."""
     if not text:
         return ""
 
-    safe_lines: list[str] = []
-    for line in text.splitlines():
-        lowered = line.lower()
-        if any(marker in lowered for marker in _SENSITIVE_LOG_MARKERS):
-            continue
-        safe_lines.append(line.strip()[:240])
+    sanitized = text
+    sanitized = _API_BOT_URL_PATTERN.sub(
+        f"https://api.telegram.org/bot{REDACTED_TELEGRAM_TOKEN}",
+        sanitized,
+    )
+    sanitized = _BOT_TOKEN_PATTERN.sub(REDACTED_TELEGRAM_TOKEN, sanitized)
+    sanitized = _ENV_TOKEN_PATTERN.sub(
+        f"TELEGRAM_BOT_TOKEN={REDACTED_TELEGRAM_TOKEN}",
+        sanitized,
+    )
+    return sanitized
 
-    tail = safe_lines[-8:]
-    return "\n".join(tail).strip()
+
+def _prepare_output_tail(text: str | None) -> str:
+    return sanitize_log_text(_tail_output(text))
+
+
+def _sanitize_command_for_log(command: list[str]) -> str:
+    return sanitize_log_text(" ".join(command))
+
+
+def _log_report_failure_diagnostics(
+    *,
+    command: list[str],
+    returncode: int | None,
+    stdout: str | None,
+    stderr: str | None,
+) -> None:
+    safe_command = _sanitize_command_for_log(command)
+    safe_stdout = _prepare_output_tail(stdout)
+    safe_stderr = _prepare_output_tail(stderr)
+    logger.warning(
+        "Cloud report command failed.\n"
+        "Command: %s\n"
+        "Return code: %s\n"
+        "Stdout tail:\n%s\n"
+        "Stderr tail:\n%s",
+        safe_command,
+        returncode,
+        safe_stdout or "(empty)",
+        safe_stderr or "(empty)",
+    )
 
 
 def run_report_once(
@@ -173,11 +209,16 @@ def run_report_once(
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        logger.warning("Cloud report command timed out after %s seconds.", timeout_seconds)
-        stdout_tail = _tail_output(exc.stdout if isinstance(exc.stdout, str) else None)
-        stderr_tail = _sanitize_log_tail(
-            _tail_output(exc.stderr if isinstance(exc.stderr, str) else None)
+        stdout_raw = exc.stdout if isinstance(exc.stdout, str) else None
+        stderr_raw = exc.stderr if isinstance(exc.stderr, str) else None
+        _log_report_failure_diagnostics(
+            command=report_command,
+            returncode=None,
+            stdout=stdout_raw,
+            stderr=stderr_raw,
         )
+        stdout_tail = _prepare_output_tail(stdout_raw)
+        stderr_tail = _prepare_output_tail(stderr_raw)
         return ReportRunResult(
             success=False,
             returncode=None,
@@ -199,16 +240,18 @@ def run_report_once(
 
     latest_path = find_latest_report_json(settings.REPORTS_DIR)
     latest_report_path = str(latest_path) if latest_path is not None else None
-    stdout_tail = _tail_output(completed.stdout)
-    stderr_tail = _sanitize_log_tail(_tail_output(completed.stderr))
+    stdout_tail = _prepare_output_tail(completed.stdout)
+    stderr_tail = _prepare_output_tail(completed.stderr)
     success = completed.returncode == 0 and latest_report_path is not None
 
     if success:
         logger.info("Cloud report command completed successfully.")
     else:
-        logger.warning(
-            "Cloud report command failed with return code %s.",
-            completed.returncode,
+        _log_report_failure_diagnostics(
+            command=report_command,
+            returncode=completed.returncode,
+            stdout=completed.stdout,
+            stderr=completed.stderr,
         )
 
     error = None
@@ -242,6 +285,16 @@ def format_report_run_telegram_message(
         return f"{overview}\n\n{REPORT_SUCCESS_FOOTER}"
 
     lines = [REPORT_FAILURE_PREFIX]
-    if result.stderr_tail:
-        lines.extend(["", result.stderr_tail[:500]])
+    hint_source = result.stderr_tail or result.stdout_tail
+    if hint_source:
+        first_line = next(
+            (line.strip() for line in hint_source.splitlines() if line.strip()),
+            "",
+        )
+        if (
+            first_line
+            and REDACTED_TELEGRAM_TOKEN not in first_line
+            and "TELEGRAM_BOT_TOKEN" not in first_line.upper()
+        ):
+            lines.append(first_line[:160])
     return "\n".join(lines).strip()
