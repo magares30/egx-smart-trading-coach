@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from core.latest_report_sections import CLOUD_PORTFOLIO_STATE_MESSAGE
 from core.telegram_bot import (
     BTN_BEST_THREE,
     BTN_HOT_SECTORS,
@@ -33,6 +34,7 @@ from core.telegram_bot import (
     format_paper_portfolio,
     format_pnl_summary,
     format_sell_only,
+    format_sell_portfolio_menu_intro,
     format_sell_review,
     format_symbol_why,
     format_symbol_why_response,
@@ -305,8 +307,13 @@ def test_sell_review_with_positions() -> None:
 def test_sell_review_empty_message() -> None:
     payload = _sample_payload()
     payload["paper_portfolio"]["positions"] = []
+    payload["decision_summary"]["positions"] = []
+    payload["decision_summary"]["sell_alerts"] = []
 
-    assert format_sell_review(payload) == SELL_REVIEW_EMPTY_MESSAGE
+    text = format_sell_review(payload)
+
+    assert SELL_REVIEW_EMPTY_MESSAGE in text
+    assert "TradingView" not in text or "📡 المصدر" in text
 
 
 def test_paper_portfolio_formatter() -> None:
@@ -492,8 +499,12 @@ def test_format_sell_only_empty_when_no_matching_labels() -> None:
             "exit_plan": "HOLD_PROFIT_RUNNING",
         }
     ]
+    payload["decision_summary"]["positions"] = []
+    payload["decision_summary"]["sell_alerts"] = []
 
-    assert "مفيش إشارات بيع" in format_sell_only(payload)
+    text = format_sell_only(payload)
+
+    assert "مفيش إشارات بيع" in text
 
 
 def test_format_pnl_summary_uses_paper_performance() -> None:
@@ -523,3 +534,95 @@ def test_format_ultra_short_max_lines_and_executive_fields() -> None:
     assert "ELKA" in text
     assert "ABUK" in text
     assert "ورقي واسترشادي فقط." in text
+
+
+def _cloud_payload_without_portfolio() -> dict:
+    return {
+        "report_date": "2026-07-03",
+        "created_at": "2026-07-03T10:00:00+00:00",
+        "market_session": {"status": "CLOSED"},
+        "executive_summary": {
+            "paper_pnl": "n/a",
+            "market": "CLOSED | BULLISH | Paper entries disabled",
+        },
+        "decision_summary": {
+            "sell_alerts": ["ABUK"],
+            "positions": [
+                {
+                    "symbol": "ABUK",
+                    "decision": "SELL_ALERT_TARGET",
+                    "review_timing": "NEXT_OPEN_SESSION",
+                }
+            ],
+        },
+        "paper_portfolio": {
+            "available": False,
+            "message": "No paper portfolio data found.",
+            "open_positions_count": 0,
+        },
+        "paper_trading_performance": {
+            "available": False,
+            "message": "No paper portfolio data found.",
+        },
+        "report_metadata": {
+            "generated_at": "2026-07-03T10:00:00+00:00",
+            "data_provider_label": "TradingView",
+            "market_status": "CLOSED",
+            "paper_portfolio_present": False,
+            "paper_performance_present": False,
+            "paper_portfolio_storage_on_server": False,
+        },
+        "sections": [
+            {
+                "title": "Paper Portfolio",
+                "lines": ["- No paper portfolio data found."],
+            },
+            {
+                "title": "Executive Summary",
+                "lines": ["- Paper P&L: n/a"],
+            },
+        ],
+    }
+
+
+def test_format_paper_portfolio_cloud_state_message() -> None:
+    text = format_paper_portfolio(_cloud_payload_without_portfolio())
+
+    assert CLOUD_PORTFOLIO_STATE_MESSAGE in text
+    assert "TradingView" in text
+    assert "CLOSED" in text
+
+
+def test_format_pnl_summary_cloud_state_message() -> None:
+    text = format_pnl_summary(_cloud_payload_without_portfolio())
+
+    assert CLOUD_PORTFOLIO_STATE_MESSAGE in text
+    assert "📡 المصدر" in text
+    assert "1234567890:AA" not in text
+
+
+def test_format_pnl_summary_with_executive_pnl_only() -> None:
+    payload = _cloud_payload_without_portfolio()
+    payload["executive_summary"]["paper_pnl"] = "+1,500.00 (+1.50%) | Open positions: 0"
+
+    text = format_pnl_summary(payload)
+
+    assert "+1,500.00" in text
+    assert CLOUD_PORTFOLIO_STATE_MESSAGE in text
+
+
+def test_format_sell_portfolio_menu_intro_explains_cloud_state() -> None:
+    text = format_sell_portfolio_menu_intro(_cloud_payload_without_portfolio())
+
+    assert "🚨 البيع والمحفظة" in text
+    assert CLOUD_PORTFOLIO_STATE_MESSAGE in text
+    assert "ABUK" in text
+    assert "اختار من القائمة" in text
+
+
+def test_format_sell_review_uses_decision_summary_without_portfolio_json() -> None:
+    text = format_sell_review(_cloud_payload_without_portfolio())
+
+    assert "ABUK" in text
+    assert "SELL_ALERT_TARGET" in text
+    assert "NEXT_OPEN_SESSION" in text

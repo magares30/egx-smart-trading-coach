@@ -205,6 +205,9 @@ def test_builds_report_from_fake_live_scan() -> None:
     assert report.market_session["status"] in {"OPEN", "CLOSED", "PREOPEN", "CLOSING_AUCTION", "TRADE_AT_CLOSE"}
     assert report.executive_summary
     assert report.warnings == warnings
+    assert report.report_metadata["data_provider"] is not None
+    assert "paper_portfolio_present" in report.report_metadata
+    assert "paper_portfolio_storage_on_server" in report.report_metadata
 
 
 def test_includes_summary_section() -> None:

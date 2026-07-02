@@ -113,6 +113,7 @@ from core.portfolio_report import (
     load_trade_journal_for_report,
     paper_portfolio_storage_exists,
 )
+from core.latest_report_sections import build_report_metadata_payload
 from core.talib_technical import (
     TalibTechnicalConfig,
     TalibTechnicalResult,
@@ -165,6 +166,7 @@ class DailyReport(BaseModel):
     exit_plan_summary: dict[str, object] = Field(default_factory=dict)
     confirmation_summary: dict[str, object] = Field(default_factory=dict)
     candidate_talib_technical: list[dict[str, object]] = Field(default_factory=list)
+    report_metadata: dict[str, object] = Field(default_factory=dict)
 
 
 def _resolve_tv_query_prefilter_diagnostics(
@@ -634,6 +636,7 @@ class DailyReportBuilder:
         paper_performance_payload: dict[str, object] = {}
         portfolio = None
         price_map: dict[str, float] | None = None
+        portfolio_storage_available = paper_portfolio_storage_exists()
         if enable_portfolio_marking or enable_performance_analytics:
             price_map = latest_prices or {
                 symbol: snap.close for symbol, snap in live_snapshot.symbols.items()
@@ -644,7 +647,7 @@ class DailyReportBuilder:
                 build_daily_report_paper_portfolio(
                     portfolio,
                     latest_prices=price_map,
-                    storage_available=paper_portfolio_storage_exists(),
+                    storage_available=portfolio_storage_available,
                     market_session=market_session_result,
                 )
             )
@@ -656,7 +659,7 @@ class DailyReportBuilder:
                     journal,
                     latest_prices=price_map,
                     paper_portfolio_payload=paper_portfolio_payload or None,
-                    storage_available=paper_portfolio_storage_exists(),
+                    storage_available=portfolio_storage_available,
                 )
             )
 
@@ -858,6 +861,13 @@ class DailyReportBuilder:
             exit_plan_summary=exit_plan_summary.to_dict(),
             confirmation_summary=confirmation_summary.to_dict(),
             candidate_talib_technical=candidate_talib_technical,
+            report_metadata=build_report_metadata_payload(
+                data_provider=data_provider,
+                market_session=market_session_result.to_dict(),
+                paper_portfolio_payload=paper_portfolio_payload,
+                paper_performance_payload=paper_performance_payload,
+                storage_on_server=portfolio_storage_available,
+            ),
         )
 
 

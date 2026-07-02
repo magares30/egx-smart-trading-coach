@@ -11,6 +11,12 @@ from typing import Any
 
 from config import settings
 from core.cloud_report_runner import find_latest_report_json
+from core.latest_report_sections import (
+    CLOUD_PORTFOLIO_STATE_MESSAGE,
+    decision_summary_sell_positions,
+    format_report_metadata_block,
+    resolve_portfolio_data_status,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -450,11 +456,18 @@ def format_sell_review(payload: dict[str, Any] | None) -> str:
         if isinstance(position, dict)
         and str(position.get("decision", "")).startswith("SELL_ALERT")
     ]
+    if not sell_positions:
+        sell_positions = decision_summary_sell_positions(payload)
 
     if not sell_positions:
-        return SELL_REVIEW_EMPTY_MESSAGE
+        status = resolve_portfolio_data_status(payload)
+        lines = ["🚨 مراجعة بيع:", ""] + format_report_metadata_block(payload) + [""]
+        lines.append(SELL_REVIEW_EMPTY_MESSAGE)
+        if status["cloud_state_missing"]:
+            lines.extend(["", CLOUD_PORTFOLIO_STATE_MESSAGE])
+        return "\n".join(lines)
 
-    lines = ["🚨 مراجعة بيع:", ""]
+    lines = ["🚨 مراجعة بيع:", ""] + format_report_metadata_block(payload) + [""]
     for index, position in enumerate(sell_positions, start=1):
         symbol = position.get("symbol", "?")
         decision = position.get("decision", "غير متاح")
@@ -472,7 +485,8 @@ def format_sell_review(payload: dict[str, Any] | None) -> str:
 
         lines.append(f"{index}. {symbol}")
         lines.append(f"   قرار: {decision}")
-        lines.append(f"   خطة خروج: {exit_plan}")
+        if exit_plan != "غير متاح":
+            lines.append(f"   خطة خروج: {exit_plan}")
         lines.append(f"   P&L: {pnl_text}")
         if review_timing:
             lines.append(f"   مراجعة: {review_timing}")
@@ -497,11 +511,18 @@ def format_sell_only(payload: dict[str, Any] | None) -> str:
         for position in (portfolio.get("positions") or [])
         if isinstance(position, dict) and _position_has_sell_or_exit_review(position)
     ]
+    if not positions:
+        positions = decision_summary_sell_positions(payload)
 
     if not positions:
-        return SELL_ONLY_EMPTY_MESSAGE
+        status = resolve_portfolio_data_status(payload)
+        lines = ["🚨 البيع فقط:", ""] + format_report_metadata_block(payload) + [""]
+        lines.append(SELL_ONLY_EMPTY_MESSAGE)
+        if status["cloud_state_missing"]:
+            lines.extend(["", CLOUD_PORTFOLIO_STATE_MESSAGE])
+        return "\n".join(lines)
 
-    lines = ["🚨 البيع فقط:", ""]
+    lines = ["🚨 البيع فقط:", ""] + format_report_metadata_block(payload) + [""]
     for index, position in enumerate(positions, start=1):
         symbol = position.get("symbol", "?")
         decision = position.get("decision", "غير متاح")
@@ -521,8 +542,7 @@ def format_pnl_summary(payload: dict[str, Any] | None) -> str:
 
     performance = payload.get("paper_trading_performance") or {}
     portfolio = payload.get("paper_portfolio") or {}
-    if not performance.get("available") and not portfolio.get("available"):
-        return "بيانات الأرباح والخسائر غير متاحة في آخر تقرير."
+    status = resolve_portfolio_data_status(payload)
 
     def fmt_amount(value: object | None) -> str:
         if value is None:
@@ -531,34 +551,149 @@ def format_pnl_summary(payload: dict[str, Any] | None) -> str:
         sign = "+" if amount > 0 else ""
         return f"{sign}{amount:,.2f}"
 
-    initial_capital = performance.get("initial_capital")
-    current_equity = performance.get("current_equity") or portfolio.get("total_equity")
-    total_pnl = performance.get("total_pnl")
-    total_return_pct = performance.get("total_return_pct")
-    unrealized = performance.get("unrealized_pnl") or portfolio.get("unrealized_pnl")
-    realized = performance.get("realized_pnl")
-    open_count = performance.get("open_positions_count") or portfolio.get(
-        "open_positions_count", 0
-    )
+    lines = ["💰 الأرباح والخسائر:", ""] + format_report_metadata_block(payload) + [""]
 
-    lines = [
-        "💰 الأرباح والخسائر:",
-        "",
-        f"رأس المال الابتدائي: {fmt_amount(initial_capital)}",
-        f"رأس المال الحالي: {fmt_amount(current_equity)}",
-        f"إجمالي P&L: {fmt_amount(total_pnl)}",
-    ]
-    if total_return_pct is not None:
-        lines[-1] += f" ({float(total_return_pct):+.2f}%)"
+    if status["has_performance_json"] or status["has_portfolio_json"]:
+        initial_capital = performance.get("initial_capital")
+        current_equity = performance.get("current_equity") or portfolio.get("total_equity")
+        total_pnl = performance.get("total_pnl")
+        total_return_pct = performance.get("total_return_pct")
+        unrealized = performance.get("unrealized_pnl") or portfolio.get("unrealized_pnl")
+        realized = performance.get("realized_pnl")
+        open_count = performance.get("open_positions_count") or portfolio.get(
+            "open_positions_count", 0
+        )
+
+        lines.extend(
+            [
+                f"رأس المال الابتدائي: {fmt_amount(initial_capital)}",
+                f"رأس المال الحالي: {fmt_amount(current_equity)}",
+                f"إجمالي P&L: {fmt_amount(total_pnl)}",
+            ]
+        )
+        if total_return_pct is not None:
+            lines[-1] += f" ({float(total_return_pct):+.2f}%)"
+        lines.extend(
+            [
+                f"P&L غير محقق: {fmt_amount(unrealized)}",
+                f"P&L محقق: {fmt_amount(realized)}",
+                f"مراكز مفتوحة: {open_count}",
+                "",
+                "محفظة ورقية فقط.",
+            ]
+        )
+        return "\n".join(lines)
+
+    if status["executive_pnl"]:
+        lines.append(f"من الملخص التنفيذي: P&L ورقي {status['executive_pnl']}")
+
+    section_lines = status["section_pnl_lines"]
+    if section_lines:
+        lines.append("من نص التقرير:")
+        for line in section_lines[:5]:
+            lines.append(f"• {line}")
+
+    if status["cloud_state_missing"]:
+        lines.extend(["", CLOUD_PORTFOLIO_STATE_MESSAGE])
+    elif not status["executive_pnl"] and not section_lines:
+        lines.append("بيانات الأرباح والخسائر غير متاحة في آخر تقرير.")
+        lines.extend(["", CLOUD_PORTFOLIO_STATE_MESSAGE])
+
+    return "\n".join(lines)
+
+
+def format_paper_portfolio(payload: dict[str, Any] | None) -> str:
+    if payload is None:
+        return NO_REPORT_MESSAGE
+
+    portfolio = payload.get("paper_portfolio") or {}
+    status = resolve_portfolio_data_status(payload)
+    lines = ["💼 محفظتي الورقية:", ""] + format_report_metadata_block(payload) + [""]
+
+    if not portfolio.get("available"):
+        if status["cloud_state_missing"]:
+            lines.append(CLOUD_PORTFOLIO_STATE_MESSAGE)
+        elif portfolio.get("open_positions_count", 0) == 0:
+            lines.append("المحفظة الورقية فارغة على السيرفر (مفيش مراكز مفتوحة).")
+        else:
+            lines.append("محفظة ورقية غير متاحة في آخر تقرير.")
+        return "\n".join(lines)
+
     lines.extend(
         [
-            f"P&L غير محقق: {fmt_amount(unrealized)}",
-            f"P&L محقق: {fmt_amount(realized)}",
-            f"مراكز مفتوحة: {open_count}",
-            "",
-            "محفظة ورقية فقط.",
+            f"كاش: {float(portfolio.get('cash', 0)):,.2f}",
+            f"مراكز مفتوحة: {portfolio.get('open_positions_count', 0)}",
+            f"قيمة السوق: {float(portfolio.get('market_value', 0)):,.2f}",
+            f"إجمالي رأس المال: {float(portfolio.get('total_equity', 0)):,.2f}",
         ]
     )
+
+    unrealized = portfolio.get("unrealized_pnl")
+    unrealized_pct = portfolio.get("unrealized_pnl_pct")
+    if unrealized is not None:
+        sign = "+" if float(unrealized) > 0 else ""
+        pnl_line = f"P&L غير محقق: {sign}{float(unrealized):,.2f}"
+        if unrealized_pct is not None:
+            pnl_line += f" ({float(unrealized_pct):+.2f}%)"
+        lines.append(pnl_line)
+
+    performance = payload.get("paper_trading_performance") or {}
+    total_pnl = performance.get("total_pnl")
+    total_return_pct = performance.get("total_return_pct")
+    if total_pnl is not None:
+        sign = "+" if float(total_pnl) > 0 else ""
+        total_line = f"إجمالي P&L: {sign}{float(total_pnl):,.2f}"
+        if total_return_pct is not None:
+            total_line += f" ({float(total_return_pct):+.2f}%)"
+        lines.append(total_line)
+
+    positions = [
+        position for position in (portfolio.get("positions") or []) if isinstance(position, dict)
+    ]
+    if positions:
+        lines.extend(["", "أهم المراكز:"])
+        for index, position in enumerate(positions[:3], start=1):
+            symbol = position.get("symbol", "?")
+            market_value = float(position.get("market_value", 0))
+            pnl = position.get("unrealized_pnl")
+            pnl_text = ""
+            if pnl is not None:
+                sign = "+" if float(pnl) > 0 else ""
+                pnl_text = f" | P&L {sign}{float(pnl):,.2f}"
+            lines.append(f"{index}. {symbol} | قيمة {market_value:,.2f}{pnl_text}")
+
+    return "\n".join(lines)
+
+
+def format_sell_portfolio_menu_intro(payload: dict[str, Any] | None) -> str:
+    """Intro text for the sell/portfolio submenu with honest Cloud Run context."""
+    if payload is None:
+        return f"🚨 البيع والمحفظة:\n\n{NO_REPORT_MESSAGE}"
+
+    status = resolve_portfolio_data_status(payload)
+    decision_summary = payload.get("decision_summary") or {}
+    sell_alerts = [
+        str(symbol).upper()
+        for symbol in decision_summary.get("sell_alerts") or []
+        if str(symbol).strip()
+    ]
+
+    lines = ["🚨 البيع والمحفظة:", ""] + format_report_metadata_block(payload) + [""]
+
+    if status["has_portfolio_json"]:
+        open_count = (payload.get("paper_portfolio") or {}).get("open_positions_count", 0)
+        lines.append(f"💼 المحفظة الورقية: متوفرة ({open_count} مركز مفتوح)")
+    elif status["cloud_state_missing"]:
+        lines.append(f"💼 المحفظة: {CLOUD_PORTFOLIO_STATE_MESSAGE}")
+    else:
+        lines.append("💼 المحفظة: غير متاحة في التقرير الحالي")
+
+    if sell_alerts:
+        lines.append(f"🚨 تنبيهات بيع من التقرير: {', '.join(sell_alerts)}")
+    else:
+        lines.append("🚨 مراجعة البيع: من إشارات التقرير ومحفظة السيرفر إن وُجدت")
+
+    lines.extend(["", "اختار من القائمة:"])
     return "\n".join(lines)
 
 
@@ -619,60 +754,6 @@ def format_ultra_short(payload: dict[str, Any] | None, *, max_lines: int = 8) ->
         ]
     )
     return "\n".join(lines[:max_lines])
-
-
-def format_paper_portfolio(payload: dict[str, Any] | None) -> str:
-    if payload is None:
-        return NO_REPORT_MESSAGE
-
-    portfolio = payload.get("paper_portfolio") or {}
-    if not portfolio.get("available"):
-        return "محفظة ورقية غير متاحة في آخر تقرير."
-
-    lines = [
-        "💼 محفظتي الورقية:",
-        "",
-        f"كاش: {float(portfolio.get('cash', 0)):,.2f}",
-        f"مراكز مفتوحة: {portfolio.get('open_positions_count', 0)}",
-        f"قيمة السوق: {float(portfolio.get('market_value', 0)):,.2f}",
-        f"إجمالي رأس المال: {float(portfolio.get('total_equity', 0)):,.2f}",
-    ]
-
-    unrealized = portfolio.get("unrealized_pnl")
-    unrealized_pct = portfolio.get("unrealized_pnl_pct")
-    if unrealized is not None:
-        sign = "+" if float(unrealized) > 0 else ""
-        pnl_line = f"P&L غير محقق: {sign}{float(unrealized):,.2f}"
-        if unrealized_pct is not None:
-            pnl_line += f" ({float(unrealized_pct):+.2f}%)"
-        lines.append(pnl_line)
-
-    performance = payload.get("paper_trading_performance") or {}
-    total_pnl = performance.get("total_pnl")
-    total_return_pct = performance.get("total_return_pct")
-    if total_pnl is not None:
-        sign = "+" if float(total_pnl) > 0 else ""
-        total_line = f"إجمالي P&L: {sign}{float(total_pnl):,.2f}"
-        if total_return_pct is not None:
-            total_line += f" ({float(total_return_pct):+.2f}%)"
-        lines.append(total_line)
-
-    positions = [
-        position for position in (portfolio.get("positions") or []) if isinstance(position, dict)
-    ]
-    if positions:
-        lines.extend(["", "أهم المراكز:"])
-        for index, position in enumerate(positions[:3], start=1):
-            symbol = position.get("symbol", "?")
-            market_value = float(position.get("market_value", 0))
-            pnl = position.get("unrealized_pnl")
-            pnl_text = ""
-            if pnl is not None:
-                sign = "+" if float(pnl) > 0 else ""
-                pnl_text = f" | P&L {sign}{float(pnl):,.2f}"
-            lines.append(f"{index}. {symbol} | قيمة {market_value:,.2f}{pnl_text}")
-
-    return "\n".join(lines)
 
 
 def format_market_status(payload: dict[str, Any] | None) -> str:
@@ -1101,7 +1182,7 @@ def run_telegram_bot() -> int:
             )
         elif text == BTN_SELL_PORTFOLIO:
             await update.message.reply_text(
-                "🚨 قائمة البيع والمحفظة:",
+                format_sell_portfolio_menu_intro(payload),
                 reply_markup=build_sell_portfolio_menu(),
             )
         elif text == BTN_MARKET_MENU:
