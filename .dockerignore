@@ -1,0 +1,35 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.git/
+.gitignore
+.venv/
+venv/
+env/
+.env
+.env.*
+*.env
+secrets/
+credentials.json
+*.pem
+service-account*.json
+logs/
+*.log
+tmp/
+temp/
+*.tmp
+*.swp
+.DS_Store
+
+# Local report artifacts are not baked into Cloud Run images in V1.
+data/reports/*.txt
+data/reports/*.json
+
+# Optional local browser/runtime artifacts
+playwright-report/
+test-results/
+.coverage
+htmlcov/

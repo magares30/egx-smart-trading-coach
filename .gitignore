@@ -1,0 +1,33 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+.env.*
+*.env
+secrets/
+credentials.json
+*.pem
+service-account*.json
+storage/portfolio_state.json
+storage/trades.json
+data/real/egx_live_ingest_warnings.json
+data/real/*.csv
+data/real/*.xlsx
+data/real/live_history/*.csv
+!data/real/live_history/README.md
+data/reports/*.txt
+data/reports/*.json
+!data/reports/README.md
+data/downloads/*
+!data/downloads/README.md
+
+# Local runtime data - do not commit
+data/reports/
+data/real/
+storage/
+logs/
+
+# Ignore all local market/runtime data
+data/
+storage/
