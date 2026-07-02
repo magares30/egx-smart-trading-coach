@@ -97,6 +97,7 @@ def test_requirements_include_tradingview_screener() -> None:
     requirements_text = (project_root / "requirements.txt").read_text(encoding="utf-8")
 
     assert "tradingview-screener" in requirements_text
+    assert "google-cloud-storage" in requirements_text
 
 
 def test_talib_is_optional_for_cloud_run() -> None:

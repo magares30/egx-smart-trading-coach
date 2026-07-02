@@ -143,6 +143,9 @@ def paper_portfolio_storage_exists() -> bool:
 
 def load_portfolio_for_marking() -> VirtualPortfolio | None:
     """Load portfolio state when present without creating new storage files."""
+    from core.cloud_state_store import hydrate_local_storage_from_cloud
+
+    hydrate_local_storage_from_cloud()
     path = settings.PORTFOLIO_STATE_PATH
     if not path.exists():
         return None
@@ -433,6 +436,9 @@ def build_daily_report_paper_portfolio(
 
 def load_trade_journal_for_report() -> TradeJournal | None:
     """Load trade journal when present without creating new storage files."""
+    from core.cloud_state_store import hydrate_local_storage_from_cloud
+
+    hydrate_local_storage_from_cloud()
     path = settings.TRADES_PATH
     if not path.exists():
         return None

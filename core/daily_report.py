@@ -900,4 +900,10 @@ def save_daily_report(
         json.dumps(report.model_dump(mode="json"), indent=2),
         encoding="utf-8",
     )
+    from core.cloud_state_store import persist_latest_report
+
+    persist_latest_report(
+        txt_path.read_text(encoding="utf-8"),
+        json_path.read_text(encoding="utf-8"),
+    )
     return txt_path, json_path

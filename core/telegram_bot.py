@@ -11,6 +11,7 @@ from typing import Any
 
 from config import settings
 from core.cloud_report_runner import find_latest_report_json
+from core.cloud_state_store import load_latest_report_json_payload
 from core.latest_report_sections import (
     CLOUD_PORTFOLIO_STATE_MESSAGE,
     decision_summary_sell_positions,
@@ -128,15 +129,7 @@ def load_latest_report_payload(
     reports_dir: Path | None = None,
 ) -> dict[str, Any] | None:
     """Load the newest saved daily report JSON payload."""
-    target_dir = reports_dir or settings.REPORTS_DIR
-    report_path = find_latest_report_json(target_dir)
-    if report_path is None:
-        return None
-    try:
-        payload = json.loads(report_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return payload if isinstance(payload, dict) else None
+    return load_latest_report_json_payload(reports_dir=reports_dir)
 
 
 def build_main_menu():
