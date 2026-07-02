@@ -90,3 +90,22 @@ def test_deployment_files_exist() -> None:
     assert (project_root / "Dockerfile").is_file()
     assert (project_root / ".dockerignore").is_file()
     assert (project_root / "DEPLOYMENT.md").is_file()
+
+
+def test_requirements_include_tradingview_screener() -> None:
+    project_root = Path(__file__).resolve().parent.parent
+    requirements_text = (project_root / "requirements.txt").read_text(encoding="utf-8")
+
+    assert "tradingview-screener" in requirements_text
+
+
+def test_talib_is_optional_for_cloud_run() -> None:
+    project_root = Path(__file__).resolve().parent.parent
+    requirements_text = (project_root / "requirements.txt").read_text(encoding="utf-8").lower()
+    talib_source = (project_root / "core" / "talib_technical.py").read_text(encoding="utf-8")
+
+    assert "ta-lib" not in requirements_text
+    assert "talib" not in requirements_text
+    assert "except ImportError" in talib_source
+    assert "TALIB_AVAILABLE" in talib_source
+    assert "TALIB_NOT_INSTALLED_WARNING" in talib_source

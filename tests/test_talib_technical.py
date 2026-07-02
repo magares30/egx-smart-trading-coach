@@ -17,7 +17,6 @@ from core.talib_technical import (
     TalibOverallStatus,
     TalibTechnicalConfig,
     TalibTrendStatus,
-    TalibVolumeConfirmation,
     build_talib_lookup_for_symbols,
     build_talib_technical_config_from_cli,
     evaluate_talib_technical_from_bars,
@@ -26,7 +25,9 @@ from core.talib_technical import (
     is_talib_engine_available,
 )
 
-pytest.importorskip("talib")
+
+def _require_talib():
+    return pytest.importorskip("talib")
 
 
 def _synthetic_bars(count: int, *, trend: float = 0.5) -> list[dict[str, float]]:
@@ -45,6 +46,27 @@ def _synthetic_bars(count: int, *, trend: float = 0.5) -> list[dict[str, float]]
     return bars
 
 
+def _minimal_live_snapshot() -> LiveMarketSnapshot:
+    return LiveMarketSnapshot(
+        as_of_date=date(2026, 2, 20),
+        symbols={
+            "COMI": LiveSymbolSnapshot(
+                symbol="COMI",
+                date=date(2026, 2, 20),
+                previous_close=127.0,
+                open=127.5,
+                high=129.0,
+                low=127.0,
+                close=128.5,
+                volume=2500,
+                change_percent=1.18,
+                volume_ratio=1.5,
+                broke_previous_high=True,
+            )
+        },
+    )
+
+
 def test_build_talib_config_from_cli() -> None:
     config = build_talib_technical_config_from_cli(
         enabled=False,
@@ -55,6 +77,7 @@ def test_build_talib_config_from_cli() -> None:
 
 
 def test_insufficient_history_result() -> None:
+    _require_talib()
     result = evaluate_talib_technical_from_bars(
         _synthetic_bars(10),
         TalibTechnicalConfig(min_history_days=50),
@@ -67,6 +90,7 @@ def test_insufficient_history_result() -> None:
 
 
 def test_evaluate_talib_technical_with_enough_bars() -> None:
+    _require_talib()
     result = evaluate_talib_technical_from_bars(
         _synthetic_bars(55),
         TalibTechnicalConfig(min_history_days=50),
@@ -87,6 +111,7 @@ def test_evaluate_talib_technical_with_enough_bars() -> None:
 
 
 def test_missing_ohlcv_values_return_insufficient_history() -> None:
+    _require_talib()
     bars = _synthetic_bars(55)
     bars[-1]["close"] = float("nan")
     result = evaluate_talib_technical_from_bars(
@@ -98,6 +123,7 @@ def test_missing_ohlcv_values_return_insufficient_history() -> None:
 
 
 def test_build_talib_lookup_uses_live_history(tmp_path: Path) -> None:
+    _require_talib()
     import pandas as pd
 
     history_dir = tmp_path / "live_history"
@@ -125,29 +151,10 @@ def test_build_talib_lookup_uses_live_history(tmp_path: Path) -> None:
         ).to_csv(source, index=False)
         store.save_snapshot(source, snapshot_date)
 
-    live_snapshot = LiveMarketSnapshot(
-        as_of_date=date(2026, 2, 20),
-        symbols={
-            "COMI": LiveSymbolSnapshot(
-                symbol="COMI",
-                date=date(2026, 2, 20),
-                previous_close=127.0,
-                open=127.5,
-                high=129.0,
-                low=127.0,
-                close=128.5,
-                volume=2500,
-                change_percent=1.18,
-                volume_ratio=1.5,
-                broke_previous_high=True,
-            )
-        },
-    )
-
     lookup, warnings = build_talib_lookup_for_symbols(
         ["COMI"],
         history_store=store,
-        live_snapshot=live_snapshot,
+        live_snapshot=_minimal_live_snapshot(),
         config=TalibTechnicalConfig(min_history_days=50),
     )
 
@@ -168,10 +175,29 @@ def test_talib_not_installed_is_handled(monkeypatch: pytest.MonkeyPatch) -> None
     assert TALIB_NOT_INSTALLED_WARNING in result.notes[0]
 
 
+def test_build_talib_lookup_returns_warning_when_not_installed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("core.talib_technical.TALIB_AVAILABLE", False)
+    store = LiveVolumeHistoryStore(tmp_path / "live_history")
+
+    lookup, warnings = build_talib_lookup_for_symbols(
+        ["COMI"],
+        history_store=store,
+        live_snapshot=_minimal_live_snapshot(),
+        config=TalibTechnicalConfig(min_history_days=50),
+    )
+
+    assert lookup == {}
+    assert warnings == [TALIB_NOT_INSTALLED_WARNING]
+
+
 def test_default_min_history_days_matches_settings() -> None:
     config = build_talib_technical_config_from_cli()
     assert config.min_history_days == settings.DEFAULT_TALIB_MIN_HISTORY_DAYS
 
 
 def test_is_talib_engine_available_when_installed() -> None:
+    _require_talib()
     assert is_talib_engine_available() is True

@@ -29,7 +29,7 @@ from core.market_hours import (
 from core.scanner import ScannerDecision, ScannerReport, ScannerResult
 from core.strategy import StrategyDecision, StrategyReport, StrategyResult
 from core.models import TradeSide
-from core.talib_technical import TalibTechnicalConfig
+from core.talib_technical import TalibTechnicalConfig, TALIB_NOT_INSTALLED_WARNING
 from core.portfolio import VirtualPortfolio
 from core.trade_journal import TradeJournal
 
@@ -1298,6 +1298,27 @@ def test_disable_talib_engine_omits_candidate_talib_lines() -> None:
 
     assert report.candidate_talib_technical == []
     assert "TA-Lib:" not in text
+
+
+def test_missing_talib_does_not_crash_daily_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("core.talib_technical.TALIB_AVAILABLE", False)
+    live_snapshot, mood, scanner_report, strategy_report, warnings = _fake_scan_bundle()
+
+    report = DailyReportBuilder().build_from_live_scan(
+        live_snapshot,
+        mood,
+        scanner_report,
+        strategy_report,
+        warnings=warnings,
+        talib_config=TalibTechnicalConfig(enabled=True, min_history_days=50),
+    )
+
+    assert report.report_date == date(2026, 7, 1)
+    assert report.sections
+    assert TALIB_NOT_INSTALLED_WARNING in report.warnings
+    assert report.candidate_talib_technical == []
 
 
 def test_talib_insufficient_history_line_in_top_candidates(
