@@ -1051,6 +1051,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Verify Cloud Run dependencies, paths, and report command (no report run)",
     )
     parser.add_argument(
+        "--egx-bootstrap-cloud-paper-portfolio",
+        action="store_true",
+        help="Create fresh paper portfolio and empty trade journal for Cloud Run",
+    )
+    parser.add_argument(
+        "--force-bootstrap-paper-portfolio",
+        action="store_true",
+        help="Overwrite existing paper portfolio/journal during cloud bootstrap",
+    )
+    parser.add_argument(
         "--backtest",
         action="store_true",
         help="Run daily backtest simulation after market analysis",
@@ -3508,6 +3518,13 @@ def main(argv: list[str] | None = None) -> int:
         from core.cloud_readiness import run_cloud_readiness_check
 
         return run_cloud_readiness_check()
+
+    if cli_args.egx_bootstrap_cloud_paper_portfolio:
+        from core.cloud_paper_portfolio_bootstrap import run_egx_bootstrap_cloud_paper_portfolio
+
+        return run_egx_bootstrap_cloud_paper_portfolio(
+            force=cli_args.force_bootstrap_paper_portfolio,
+        )
 
     if cli_args.market_hours_status:
         return run_market_hours_status(
