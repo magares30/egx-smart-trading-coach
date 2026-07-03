@@ -207,6 +207,40 @@ def _sample_payload() -> dict:
             "talib_mode": "active",
             "talib_reason": "",
             "tradingview_technical_available": True,
+            "confidence_v2_available": True,
+        },
+        "confidence_v2_summary": {
+            "available": True,
+            "strong": ["ELKA"],
+            "good": ["LCSW"],
+            "mixed": ["TANM"],
+            "weak": [],
+            "wait": ["ABUK"],
+            "main_risks": ["market closed; review next session"],
+            "top_reason": "TradingView technical confirmation supportive",
+        },
+        "confidence_v2_context": {
+            "ELKA": {
+                "symbol": "ELKA",
+                "confidence_score_v2": 88,
+                "confidence_label_v2": "STRONG",
+                "confidence_reasons_v2": [
+                    "TradingView technical confirmation supportive",
+                    "Market Memory shows improvement",
+                ],
+                "confidence_risks_v2": ["market closed; review next session"],
+                "confidence_components_v2": {
+                    "base_score": 80,
+                    "technical": 12,
+                    "market_mood": 15,
+                    "memory": 12,
+                    "sector": 10,
+                    "risk_reward": 8,
+                    "fundamentals": 0,
+                    "liquidity": 10,
+                    "session": -8,
+                },
+            }
         },
         "candidate_fundamentals": [
             {
@@ -320,6 +354,8 @@ def test_daily_overview_formatter() -> None:
     assert "3 good setups" in text
     assert "Market closed" in text
     assert "TA-Lib: ACTIVE" in text
+    assert "🧠 الثقة الذكية:" in text
+    assert "قوي: ELKA" in text
 
 
 def test_daily_overview_includes_market_memory_block() -> None:
@@ -358,6 +394,15 @@ def test_symbol_why_includes_market_memory() -> None:
 
     assert "ذاكرة السهم: IMPROVING" in text
     assert "65" in text and "80" in text
+
+
+def test_symbol_why_includes_confidence_v2() -> None:
+    text = format_symbol_why(_sample_payload(), "ELKA")
+
+    assert "الثقة الذكية: STRONG 88" in text
+    assert "أسباب الثقة" in text
+    assert "مخاطر الثقة" in text
+    assert "مكونات مختصرة" in text
 
 
 def test_daily_overview_shows_talib_fallback() -> None:

@@ -120,6 +120,12 @@ from core.closed_market_digest import (
     build_closed_market_digest,
     format_closed_market_digest_report_lines,
 )
+from core.confidence_score import (
+    ConfidenceInput,
+    build_confidence_v2_context,
+    enrich_section_lines_with_confidence_v2,
+    format_confidence_v2_report_lines,
+)
 from core.market_memory import (
     STATUS_BLOCKED,
     STATUS_CANDIDATE,
@@ -268,6 +274,103 @@ def _build_market_memory_observations(
     return observations
 
 
+def _build_confidence_v2_inputs(
+    *,
+    strategy_items: list[StrategyResult],
+    display_candidates: list[ScannerResult],
+    scanner_report: ScannerReport,
+    ranking_frame: pd.DataFrame,
+    technical_config: TechnicalConfirmationConfig,
+    fundamental_config: FundamentalQualityConfig,
+    talib_lookup: dict[str, TalibTechnicalResult],
+    market_mood: MarketMoodResult,
+    market_breadth_mood_result: MarketBreadthMoodResult | None,
+    market_memory_context: dict[str, dict[str, object]],
+    sector_momentum_result: object,
+    closed_market_digest: dict[str, object],
+) -> list[ConfidenceInput]:
+    """Build additive Confidence V2 inputs from existing report layers."""
+    strategy_by_symbol = {item.symbol: item for item in strategy_items}
+    candidate_by_symbol = {item.symbol: item for item in display_candidates}
+    watch_by_symbol = {item.symbol: item for item in scanner_report.watchlist}
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for source in (strategy_items, display_candidates, scanner_report.watchlist):
+        for item in source:
+            symbol = item.symbol
+            if symbol not in seen:
+                seen.add(symbol)
+                symbols.append(symbol)
+
+    inputs: list[ConfidenceInput] = []
+    market_mood_label = (
+        market_breadth_mood_result.mood.value
+        if market_breadth_mood_result is not None
+        else market_mood.mood.value
+    )
+    stale_prices = bool(closed_market_digest.get("is_price_data_stale"))
+    market_closed = bool(closed_market_digest.get("enabled"))
+
+    for symbol in symbols:
+        try:
+            strategy_item = strategy_by_symbol.get(symbol)
+            candidate_item = candidate_by_symbol.get(symbol)
+            watch_item = watch_by_symbol.get(symbol)
+            scanner_item = candidate_item or watch_item
+            base_score = (
+                strategy_item.confidence_score
+                if strategy_item is not None
+                else (scanner_item.score if scanner_item is not None else None)
+            )
+            volume_ratio = scanner_item.volume_ratio if scanner_item is not None else None
+            row = row_for_symbol(ranking_frame, symbol)
+            tv_result = (
+                evaluate_technical_confirmation(row, technical_config)
+                if technical_config.enabled
+                else None
+            )
+            fundamental_result = evaluate_fundamental_quality(row, fundamental_config)
+            talib_result = talib_lookup.get(symbol)
+            memory = market_memory_context.get(symbol) or {}
+
+            inputs.append(
+                ConfidenceInput(
+                    symbol=symbol,
+                    base_score=base_score,
+                    technical_status=(
+                        tv_result.status.value if tv_result is not None else None
+                    ),
+                    technical_score=(
+                        tv_result.technical_score if tv_result is not None else None
+                    ),
+                    talib_status=(
+                        talib_result.status.value if talib_result is not None else None
+                    ),
+                    talib_available=(
+                        bool(talib_result.talib_available)
+                        if talib_result is not None
+                        else False
+                    ),
+                    market_mood=market_mood_label,
+                    memory_label=str(memory.get("memory_label") or ""),
+                    sector_status=sector_status_for_symbol(
+                        symbol,
+                        sector_momentum_result,
+                    ),
+                    risk_reward=(
+                        strategy_item.risk_reward if strategy_item is not None else None
+                    ),
+                    fundamental_status=fundamental_result.status.value,
+                    volume_ratio=volume_ratio,
+                    market_closed=market_closed,
+                    stale_prices=stale_prices,
+                )
+            )
+        except Exception as exc:  # pragma: no cover - defensive safety guard
+            logger.warning("Confidence V2 input build failed for %s: %s", symbol, exc)
+    return inputs
+
+
 class DailyReportSection(BaseModel):
     title: str
     lines: list[str] = Field(default_factory=list)
@@ -294,6 +397,8 @@ class DailyReport(BaseModel):
     candidate_talib_technical: list[dict[str, object]] = Field(default_factory=list)
     market_memory_summary: dict[str, object] = Field(default_factory=dict)
     market_memory_context: dict[str, dict[str, object]] = Field(default_factory=dict)
+    confidence_v2_summary: dict[str, object] = Field(default_factory=dict)
+    confidence_v2_context: dict[str, dict[str, object]] = Field(default_factory=dict)
     report_metadata: dict[str, object] = Field(default_factory=dict)
 
 
@@ -965,6 +1070,38 @@ class DailyReportBuilder:
             data_provider=data_provider,
             as_of_date=reference_moment.date(),
         )
+        (
+            confidence_v2_context,
+            confidence_v2_summary,
+            confidence_v2_available,
+        ) = build_confidence_v2_context(
+            _build_confidence_v2_inputs(
+                strategy_items=strategy_items,
+                display_candidates=display_candidates,
+                scanner_report=scanner_report,
+                ranking_frame=ranking_frame,
+                technical_config=technical_values,
+                fundamental_config=fundamental_values,
+                talib_lookup=talib_lookup,
+                market_mood=market_mood,
+                market_breadth_mood_result=market_breadth_mood_result,
+                market_memory_context=market_memory_context,
+                sector_momentum_result=sector_momentum_result,
+                closed_market_digest=closed_market_digest_payload,
+            )
+        )
+        candidate_lines = enrich_section_lines_with_confidence_v2(
+            candidate_lines,
+            confidence_v2_context,
+        )
+        strategy_lines = enrich_section_lines_with_confidence_v2(
+            strategy_lines,
+            confidence_v2_context,
+        )
+        watch_lines = enrich_section_lines_with_confidence_v2(
+            watch_lines,
+            confidence_v2_context,
+        )
 
         sections: list[DailyReportSection] = []
         if closed_market_digest_payload.get("enabled"):
@@ -985,6 +1122,10 @@ class DailyReportBuilder:
                 DailyReportSection(title="Summary", lines=summary_lines),
                 DailyReportSection(title="Market Session", lines=market_session_lines),
                 DailyReportSection(title="Candidate Filters", lines=filter_lines),
+                DailyReportSection(
+                    title="Confidence V2 Summary",
+                    lines=format_confidence_v2_report_lines(confidence_v2_summary),
+                ),
                 DailyReportSection(
                     title="Market Memory",
                     lines=format_market_memory_report_lines(market_memory_summary),
@@ -1048,6 +1189,9 @@ class DailyReportBuilder:
             memory_context = market_memory_context.get(symbol)
             if memory_context:
                 signal.update(memory_context)
+            confidence_context = confidence_v2_context.get(symbol)
+            if confidence_context:
+                signal.update(confidence_context)
 
         report_metadata_payload = build_report_metadata_payload(
             data_provider=data_provider,
@@ -1060,6 +1204,7 @@ class DailyReportBuilder:
             closed_market_digest=closed_market_digest_payload,
         )
         report_metadata_payload["market_memory_available"] = market_memory_available
+        report_metadata_payload["confidence_v2_available"] = confidence_v2_available
 
         return DailyReport(
             report_date=live_snapshot.as_of_date,
@@ -1085,6 +1230,8 @@ class DailyReportBuilder:
             candidate_talib_technical=candidate_talib_technical,
             market_memory_summary=market_memory_summary,
             market_memory_context=market_memory_context,
+            confidence_v2_summary=confidence_v2_summary,
+            confidence_v2_context=confidence_v2_context,
             report_metadata=report_metadata_payload,
         )
 

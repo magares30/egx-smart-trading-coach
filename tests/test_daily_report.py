@@ -1483,6 +1483,12 @@ def test_executive_summary_closed_market_action_is_watch_only() -> None:
     )
     assert "stale" in report.executive_summary["main_risk"].lower()
     assert report.report_metadata["closed_market_digest"]["enabled"] is True
+    assert report.report_metadata["confidence_v2_available"] is True
+    assert any(
+        "market closed" in risk
+        for context in report.confidence_v2_context.values()
+        for risk in context.get("confidence_risks_v2", [])
+    )
     digest_section = next(
         section for section in report.sections if section.title == "Closed Market Digest"
     )
@@ -1537,6 +1543,17 @@ def test_daily_report_includes_market_memory_context(
     assert report.report_metadata["market_memory_available"] is True
     assert report.market_memory_summary["available"] is True
     assert report.market_memory_context
+    assert report.report_metadata["confidence_v2_available"] is True
+    assert report.confidence_v2_summary["available"] is True
+    confidence_context = next(iter(report.confidence_v2_context.values()))
+    assert "confidence_components_v2" in confidence_context
+    confidence_section = next(
+        section for section in report.sections if section.title == "Confidence V2 Summary"
+    )
+    assert any(
+        "Good confidence" in line or "Strong confidence" in line
+        for line in confidence_section.lines
+    )
     memory_section = next(
         section for section in report.sections if section.title == "Market Memory"
     )
@@ -1544,6 +1561,7 @@ def test_daily_report_includes_market_memory_context(
     candidates = next(
         section for section in report.sections if section.title == "Top Candidates"
     )
+    assert "Confidence V2:" in "\n".join(candidates.lines)
     assert "Memory:" in "\n".join(candidates.lines)
 
 

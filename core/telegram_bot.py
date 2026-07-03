@@ -23,6 +23,10 @@ from core.closed_market_digest import (
     format_closed_market_digest_arabic_block,
     format_closed_market_reason_arabic,
 )
+from core.confidence_score import (
+    format_confidence_v2_arabic_block,
+    format_symbol_confidence_v2_arabic_lines,
+)
 from core.market_memory import (
     format_market_memory_arabic_block,
     format_symbol_memory_arabic_lines,
@@ -264,16 +268,24 @@ def _strategy_signals(payload: dict[str, Any]) -> list[dict[str, Any]]:
         for item in (payload.get("decision_summary") or {}).get("signals", [])
         if isinstance(item, dict) and item.get("symbol")
     }
+    confidence_lookup = {
+        str(symbol).upper(): item
+        for symbol, item in (payload.get("confidence_v2_context") or {}).items()
+        if isinstance(item, dict)
+    }
     for item in parsed:
         symbol = str(item.get("symbol", "")).upper()
         confirmation = confirmation_lookup.get(symbol, {})
         decision = decision_lookup.get(symbol, {})
+        confidence = confidence_lookup.get(symbol, {})
         item["confirmation_label"] = confirmation.get("confirmation_label")
         item["confirmation_text"] = confirmation.get("confirmation_text")
         item["decision"] = decision.get("decision") or item.get("decision_label")
         item["strategy_decision"] = decision.get("strategy_decision") or item.get(
             "strategy_decision"
         )
+        if confidence:
+            item.update(confidence)
     return parsed
 
 
@@ -295,6 +307,22 @@ def _market_memory_context_for_symbol(
     symbol: str,
 ) -> dict[str, Any] | None:
     context = payload.get("market_memory_context") or {}
+    if not isinstance(context, dict):
+        return None
+    value = context.get(symbol.upper())
+    return value if isinstance(value, dict) else None
+
+
+def _confidence_v2_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    summary = payload.get("confidence_v2_summary") or {}
+    return summary if isinstance(summary, dict) else {}
+
+
+def _confidence_v2_context_for_symbol(
+    payload: dict[str, Any],
+    symbol: str,
+) -> dict[str, Any] | None:
+    context = payload.get("confidence_v2_context") or {}
     if not isinstance(context, dict):
         return None
     value = context.get(symbol.upper())
@@ -351,6 +379,7 @@ def format_daily_overview(payload: dict[str, Any] | None) -> str:
 
     lines: list[str] = []
     lines.extend(format_closed_market_digest_arabic_block(closed_digest))
+    lines.extend(format_confidence_v2_arabic_block(_confidence_v2_summary(payload)))
     lines.extend(format_market_memory_arabic_block(_market_memory_summary(payload)))
     lines.extend(
         [
@@ -391,6 +420,7 @@ def format_best_opportunities(payload: dict[str, Any] | None, *, limit: int = 5)
         return "مفيش فرص واضحة في آخر تقرير."
 
     lines = ["🔥 أفضل الفرص:", ""]
+    lines.extend(format_confidence_v2_arabic_block(_confidence_v2_summary(payload)))
     lines.extend(format_market_memory_arabic_block(_market_memory_summary(payload)))
     for index, signal in enumerate(signals, start=1):
         lines.extend(_format_signal_block(signal, index=index))
@@ -412,6 +442,15 @@ def _format_signal_block(signal: dict[str, Any], *, index: int) -> list[str]:
     timing = signal.get("timing")
 
     lines = [f"{index}. {symbol} | {decision}", f"   تأكيد: {confirmation}"]
+    if (
+        signal.get("confidence_label_v2")
+        or signal.get("confidence_score_v2") is not None
+    ):
+        lines.append(
+            "   ثقة ذكية: "
+            f"{signal.get('confidence_label_v2', 'غير متاح')} "
+            f"{signal.get('confidence_score_v2', 'غير متاح')}"
+        )
     if entry and stop and target:
         lines.append(f"   دخول {entry} | وقف {stop} | هدف {target}")
     if timing:
@@ -443,8 +482,12 @@ def format_best_three(payload: dict[str, Any] | None) -> str:
         return "مفيش فرص واضحة في آخر تقرير."
 
     lines = ["📌 أفضل 3 بس:", ""]
+    lines.extend(format_confidence_v2_arabic_block(_confidence_v2_summary(payload)))
     lines.extend(format_market_memory_arabic_block(_market_memory_summary(payload)))
-    lines.extend(_format_signal_short(signal, index=index) for index, signal in enumerate(signals, start=1))
+    lines.extend(
+        _format_signal_short(signal, index=index)
+        for index, signal in enumerate(signals, start=1)
+    )
     lines.extend(["", "دي متابعة مش تنفيذ حقيقي."])
     return "\n".join(lines)
 
@@ -474,6 +517,7 @@ def format_next_session_watch(payload: dict[str, Any] | None, *, limit: int = 5)
     metadata = payload.get("report_metadata") or {}
     closed_digest = metadata.get("closed_market_digest") or {}
     lines = ["👀 راقب الجلسة الجاية:", ""]
+    lines.extend(format_confidence_v2_arabic_block(_confidence_v2_summary(payload)))
     lines.extend(format_market_memory_arabic_block(_market_memory_summary(payload)))
     if closed_digest.get("enabled") or market_session.get("status") == "CLOSED":
         lines.append("السوق مقفول دلوقتي — الإشارات دي للمتابعة مش للتنفيذ الفوري.")
@@ -1001,6 +1045,9 @@ def format_symbol_why(payload: dict[str, Any] | None, symbol: str) -> str:
     lines.append(
         f"السكور: {_resolve_symbol_score(candidate=candidate, strategy=strategy, watch_item=watch_item)}"
     )
+    lines.extend(format_symbol_confidence_v2_arabic_lines(
+        _confidence_v2_context_for_symbol(payload, normalized)
+    ))
     lines.extend(format_symbol_memory_arabic_lines(
         _market_memory_context_for_symbol(payload, normalized)
     ))
