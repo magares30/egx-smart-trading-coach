@@ -209,6 +209,35 @@ def _sample_payload() -> dict:
             "tradingview_technical_available": True,
             "confidence_v2_available": True,
             "sector_intelligence_available": True,
+            "portfolio_learning_available": True,
+        },
+        "portfolio_learning_summary": {
+            "available": True,
+            "open_positions_count": 1,
+            "closed_trades_count": 5,
+            "win_rate_pct": 60.0,
+            "average_win_pct": 3.5,
+            "average_loss_pct": -1.5,
+            "expectancy_pct": 1.5,
+            "best_trade": {"symbol": "ELKA", "pnl_percent": 4.0},
+            "worst_trade": {"symbol": "ABUK", "pnl_percent": -2.0},
+            "confidence_buckets": {},
+            "sector_buckets": {},
+            "memory_buckets": {},
+            "best_pattern": "confidence STRONG avg +3.50%",
+            "weak_pattern": "confidence WEAK avg -1.50%",
+            "learning_notes": [],
+            "learning_warnings": [],
+        },
+        "portfolio_learning_context": {
+            "available": True,
+            "open_positions": [],
+            "symbols": {
+                "ELKA": {
+                    "symbol": "ELKA",
+                    "learning_line": "STRONG setups have performed well so far",
+                }
+            },
         },
         "sector_intelligence_summary": {
             "available": True,
@@ -379,6 +408,8 @@ def test_daily_overview_formatter() -> None:
     assert "3 good setups" in text
     assert "Market closed" in text
     assert "TA-Lib: ACTIVE" in text
+    assert "📚 تعلم المحفظة:" in text
+    assert "صفقات مغلقة: 5" in text
     assert "🏭 ذكاء القطاعات:" in text
     assert "مدعوم بالقطاع: ELKA" in text
     assert "🧠 الثقة الذكية:" in text
@@ -441,6 +472,12 @@ def test_symbol_why_includes_sector_intelligence() -> None:
     assert "سبب القطاع" in text
 
 
+def test_symbol_why_includes_portfolio_learning() -> None:
+    text = format_symbol_why(_sample_payload(), "ELKA")
+
+    assert "تعلم المحفظة: STRONG setups have performed well so far" in text
+
+
 def test_daily_overview_shows_talib_fallback() -> None:
     payload = _sample_payload()
     payload["report_metadata"] = {
@@ -496,6 +533,7 @@ def test_paper_portfolio_formatter() -> None:
     text = format_paper_portfolio(_sample_payload())
 
     assert "محفظتي الورقية" in text
+    assert "تعلم المحفظة" in text
     assert "5,815.53" in text
     assert "ABUK" in text
 

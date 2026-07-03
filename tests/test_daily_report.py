@@ -1010,6 +1010,11 @@ def test_daily_report_without_storage_files_does_not_crash(
 
     assert "- No paper portfolio data found." in section.lines
     assert report.paper_portfolio["available"] is False
+    assert report.report_metadata["portfolio_learning_available"] is False
+    learning_section = next(
+        section for section in report.sections if section.title == "Portfolio Learning"
+    )
+    assert "waiting for more paper trade history" in "\n".join(learning_section.lines)
 
 
 def test_daily_report_empty_portfolio_shows_no_open_positions(
@@ -1033,6 +1038,8 @@ def test_daily_report_empty_portfolio_shows_no_open_positions(
     assert "- Open Positions: 0" in section.lines
     assert "- No open paper positions to mark." in section.lines
     assert report.paper_portfolio["open_positions_count"] == 0
+    assert report.report_metadata["portfolio_learning_available"] is True
+    assert report.portfolio_learning_summary["open_positions_count"] == 0
 
 
 def test_daily_report_marks_open_position_pnl_correctly(
@@ -1069,6 +1076,8 @@ def test_daily_report_marks_open_position_pnl_correctly(
     assert "P&L +350.00 (+4.12%)" in section_text
     assert report.paper_portfolio["unrealized_pnl"] == pytest.approx(350.0)
     assert report.paper_portfolio["unrealized_pnl_pct"] == pytest.approx(4.117647, rel=1e-4)
+    assert report.portfolio_learning_summary["open_positions_count"] == 1
+    assert "COMI" in report.portfolio_learning_context["symbols"]
 
 
 def test_daily_report_missing_symbol_price_shows_warning(

@@ -31,6 +31,10 @@ from core.sector_intelligence import (
     format_sector_intelligence_arabic_block,
     format_symbol_sector_intelligence_arabic_lines,
 )
+from core.portfolio_learning import (
+    format_portfolio_learning_arabic_block,
+    format_symbol_portfolio_learning_arabic_line,
+)
 from core.market_memory import (
     format_market_memory_arabic_block,
     format_symbol_memory_arabic_lines,
@@ -357,6 +361,25 @@ def _sector_intelligence_context_for_symbol(
     return value if isinstance(value, dict) else None
 
 
+def _portfolio_learning_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    summary = payload.get("portfolio_learning_summary") or {}
+    return summary if isinstance(summary, dict) else {}
+
+
+def _portfolio_learning_context_for_symbol(
+    payload: dict[str, Any],
+    symbol: str,
+) -> dict[str, Any] | None:
+    context = payload.get("portfolio_learning_context") or {}
+    if not isinstance(context, dict):
+        return None
+    symbols = context.get("symbols") or {}
+    if not isinstance(symbols, dict):
+        return None
+    value = symbols.get(symbol.upper())
+    return value if isinstance(value, dict) else None
+
+
 def collect_why_symbols(
     payload: dict[str, Any] | None,
     *,
@@ -407,6 +430,9 @@ def format_daily_overview(payload: dict[str, Any] | None) -> str:
 
     lines: list[str] = []
     lines.extend(format_closed_market_digest_arabic_block(closed_digest))
+    lines.extend(
+        format_portfolio_learning_arabic_block(_portfolio_learning_summary(payload))
+    )
     lines.extend(
         format_sector_intelligence_arabic_block(_sector_intelligence_summary(payload))
     )
@@ -739,6 +765,9 @@ def format_paper_portfolio(payload: dict[str, Any] | None) -> str:
     portfolio = payload.get("paper_portfolio") or {}
     status = resolve_portfolio_data_status(payload)
     lines = ["💼 محفظتي الورقية:", ""] + format_report_metadata_block(payload) + [""]
+    lines.extend(
+        format_portfolio_learning_arabic_block(_portfolio_learning_summary(payload))
+    )
 
     if not portfolio.get("available"):
         if status["cloud_state_missing"]:
@@ -1085,8 +1114,9 @@ def format_symbol_why(payload: dict[str, Any] | None, symbol: str) -> str:
     lines.append(
         f"السكور: {_resolve_symbol_score(candidate=candidate, strategy=strategy, watch_item=watch_item)}"
     )
+    confidence_context = _confidence_v2_context_for_symbol(payload, normalized)
     lines.extend(format_symbol_confidence_v2_arabic_lines(
-        _confidence_v2_context_for_symbol(payload, normalized)
+        confidence_context
     ))
     lines.extend(format_symbol_sector_intelligence_arabic_lines(
         _sector_intelligence_context_for_symbol(payload, normalized)
@@ -1094,6 +1124,16 @@ def format_symbol_why(payload: dict[str, Any] | None, symbol: str) -> str:
     lines.extend(format_symbol_memory_arabic_lines(
         _market_memory_context_for_symbol(payload, normalized)
     ))
+    learning_line = format_symbol_portfolio_learning_arabic_line(
+        _portfolio_learning_context_for_symbol(payload, normalized),
+        confidence_label=(
+            confidence_context.get("confidence_label_v2")
+            if confidence_context
+            else None
+        ),
+    )
+    if learning_line:
+        lines.append(learning_line)
 
     if candidate:
         details = candidate.get("details") or []

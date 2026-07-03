@@ -116,6 +116,10 @@ from core.portfolio_report import (
     load_trade_journal_for_report,
     paper_portfolio_storage_exists,
 )
+from core.portfolio_learning import (
+    build_portfolio_learning,
+    format_portfolio_learning_report_lines,
+)
 from core.latest_report_sections import build_report_metadata_payload
 from core.closed_market_digest import (
     build_closed_market_digest,
@@ -461,6 +465,8 @@ class DailyReport(BaseModel):
     )
     confidence_v2_summary: dict[str, object] = Field(default_factory=dict)
     confidence_v2_context: dict[str, dict[str, object]] = Field(default_factory=dict)
+    portfolio_learning_summary: dict[str, object] = Field(default_factory=dict)
+    portfolio_learning_context: dict[str, object] = Field(default_factory=dict)
     report_metadata: dict[str, object] = Field(default_factory=dict)
 
 
@@ -977,6 +983,17 @@ class DailyReportBuilder:
                     storage_available=portfolio_storage_available,
                 )
             )
+        (
+            portfolio_learning_summary,
+            portfolio_learning_context,
+            portfolio_learning_available,
+        ) = build_portfolio_learning(
+            portfolio=portfolio,
+            journal=journal if enable_performance_analytics else None,
+            paper_portfolio_payload=paper_portfolio_payload,
+            latest_prices=price_map,
+            now=now,
+        )
 
         (
             market_memory_available,
@@ -1262,6 +1279,14 @@ class DailyReportBuilder:
                     lines=paper_performance_lines,
                 )
             )
+        sections.append(
+            DailyReportSection(
+                title="Portfolio Learning",
+                lines=format_portfolio_learning_report_lines(
+                    portfolio_learning_summary
+                ),
+            )
+        )
         sections.extend(
             [
                 DailyReportSection(title="Strongest Movers", lines=mover_lines),
@@ -1306,6 +1331,9 @@ class DailyReportBuilder:
             sector_intelligence_available
         )
         report_metadata_payload["confidence_v2_available"] = confidence_v2_available
+        report_metadata_payload["portfolio_learning_available"] = (
+            portfolio_learning_available
+        )
 
         return DailyReport(
             report_date=live_snapshot.as_of_date,
@@ -1335,6 +1363,8 @@ class DailyReportBuilder:
             sector_intelligence_context=sector_intelligence_context,
             confidence_v2_summary=confidence_v2_summary,
             confidence_v2_context=confidence_v2_context,
+            portfolio_learning_summary=portfolio_learning_summary,
+            portfolio_learning_context=portfolio_learning_context,
             report_metadata=report_metadata_payload,
         )
 
