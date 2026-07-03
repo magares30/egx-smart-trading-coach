@@ -18,6 +18,7 @@ from core.latest_report_sections import (
     format_report_metadata_block,
     resolve_portfolio_data_status,
 )
+from core.market_hours_auto_refresh import is_auto_refresh_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -822,24 +823,27 @@ def format_warnings(payload: dict[str, Any] | None, *, limit: int = 6) -> str:
 
 
 def format_help() -> str:
-    return "\n".join(
-        [
-            "ℹ️ مساعدة:",
-            "",
-            f"{BTN_DAILY} — ملخص سريع لآخر تقرير",
-            f"{BTN_REFRESH_REPORT} — يشغّل تقرير EGX من السيرفر",
-            f"{BTN_OPPORTUNITIES} — {BTN_BEST_THREE} / {BTN_BEST} / {BTN_NEXT_SESSION}",
-            f"{BTN_SELL_PORTFOLIO} — {BTN_SELL} / {BTN_SELL_ONLY} / {BTN_PORTFOLIO} / {BTN_PNL}",
-            f"{BTN_MARKET_MENU} — {BTN_MARKET} / {BTN_HOT_SECTORS} / {BTN_ULTRA_SHORT}",
-            f"{BTN_WHY} — اختار سهم من أزرار أو اكتب WHY ELKA",
-            f"{BTN_WARNINGS} — أهم التحذيرات",
-            f"{BTN_BACK} — رجوع للقائمة الرئيسية",
-            "",
-            "☁️ السيرفر: 🔄 يحدّث التقرير من Cloud Run (TradingView). TA-Lib اختياري.",
-            "☁️ محفظة السيرفر: لو لسه مش متفعّلة، شغّل bootstrap على Cloud Run.",
-            "البوت ده استرشادي وورقي فقط، مفيش تنفيذ حقيقي.",
-        ]
-    )
+    lines = [
+        "ℹ️ مساعدة:",
+        "",
+        f"{BTN_DAILY} — ملخص سريع لآخر تقرير",
+        f"{BTN_REFRESH_REPORT} — يشغّل تقرير EGX من السيرفر",
+        f"{BTN_OPPORTUNITIES} — {BTN_BEST_THREE} / {BTN_BEST} / {BTN_NEXT_SESSION}",
+        f"{BTN_SELL_PORTFOLIO} — {BTN_SELL} / {BTN_SELL_ONLY} / {BTN_PORTFOLIO} / {BTN_PNL}",
+        f"{BTN_MARKET_MENU} — {BTN_MARKET} / {BTN_HOT_SECTORS} / {BTN_ULTRA_SHORT}",
+        f"{BTN_WHY} — اختار سهم من أزرار أو اكتب WHY ELKA",
+        f"{BTN_WARNINGS} — أهم التحذيرات",
+        f"{BTN_BACK} — رجوع للقائمة الرئيسية",
+        "",
+        "☁️ السيرفر: 🔄 يحدّث التقرير من Cloud Run (TradingView). TA-Lib اختياري.",
+        "☁️ محفظة السيرفر: لو لسه مش متفعّلة، شغّل bootstrap على Cloud Run.",
+    ]
+    if is_auto_refresh_enabled():
+        lines.append(
+            "🔄 التحديث التلقائي: أوقات سوق EGX فقط (مش 24/7) ومش الجمعة/السبت."
+        )
+    lines.append("البوت ده استرشادي وورقي فقط، مفيش تنفيذ حقيقي.")
+    return "\n".join(lines)
 
 
 def parse_why_command(text: str) -> str | None:
@@ -1045,6 +1049,10 @@ def run_telegram_bot() -> int:
     from core.health_server import start_health_server
 
     start_health_server()
+
+    from core.market_hours_auto_refresh import start_market_hours_auto_refresh_worker
+
+    start_market_hours_auto_refresh_worker()
 
     allowed_chat_id = get_allowed_chat_id()
     logger.info("Starting Telegram bot.")
