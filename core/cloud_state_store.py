@@ -19,10 +19,12 @@ LATEST_REPORT_TXT_KEY = "reports/latest_report.txt"
 LATEST_REPORT_JSON_KEY = "reports/latest_report.json"
 PORTFOLIO_STATE_KEY = "storage/portfolio_state.json"
 TRADES_KEY = "storage/trades.json"
+MARKET_MEMORY_KEY = "storage/market_memory.json"
 
 _STATE_KEY_TO_LOCAL_PATH = {
     PORTFOLIO_STATE_KEY: settings.PORTFOLIO_STATE_PATH,
     TRADES_KEY: settings.TRADES_PATH,
+    MARKET_MEMORY_KEY: settings.MARKET_MEMORY_PATH,
 }
 
 

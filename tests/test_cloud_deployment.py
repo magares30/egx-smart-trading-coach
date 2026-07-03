@@ -90,6 +90,7 @@ def test_deployment_files_exist() -> None:
     assert (project_root / "Dockerfile").is_file()
     assert (project_root / ".dockerignore").is_file()
     assert (project_root / "DEPLOYMENT.md").is_file()
+    assert (project_root / "requirements-talib.txt").is_file()
 
 
 def test_requirements_include_tradingview_screener() -> None:
@@ -102,11 +103,20 @@ def test_requirements_include_tradingview_screener() -> None:
 
 def test_talib_is_optional_for_cloud_run() -> None:
     project_root = Path(__file__).resolve().parent.parent
-    requirements_text = (project_root / "requirements.txt").read_text(encoding="utf-8").lower()
+    requirements_lines = (
+        (project_root / "requirements.txt").read_text(encoding="utf-8").splitlines()
+    )
+    optional_requirements = (
+        project_root / "requirements-talib.txt"
+    ).read_text(encoding="utf-8")
+    dockerfile = (project_root / "Dockerfile").read_text(encoding="utf-8")
     talib_source = (project_root / "core" / "talib_technical.py").read_text(encoding="utf-8")
 
-    assert "ta-lib" not in requirements_text
-    assert "talib" not in requirements_text
+    assert all(line.strip().lower() != "ta-lib" for line in requirements_lines)
+    assert "TA-Lib" in optional_requirements
+    assert "requirements-talib.txt" in dockerfile
+    assert "--only-binary=:all:" in dockerfile
+    assert "reports will use runtime fallback" in dockerfile
     assert "except ImportError" in talib_source
     assert "TALIB_AVAILABLE" in talib_source
     assert "TALIB_NOT_INSTALLED_WARNING" in talib_source

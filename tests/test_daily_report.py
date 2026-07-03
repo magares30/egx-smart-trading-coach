@@ -1512,6 +1512,41 @@ def test_open_market_report_has_closed_digest_disabled() -> None:
     )
 
 
+def test_daily_report_includes_market_memory_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory_path = tmp_path / "storage" / "market_memory.json"
+    monkeypatch.setattr(
+        "core.cloud_state_store._STATE_KEY_TO_LOCAL_PATH",
+        {"storage/market_memory.json": memory_path},
+    )
+    live_snapshot, mood, scanner_report, strategy_report, warnings = _fake_scan_bundle()
+
+    report = DailyReportBuilder().build_from_live_scan(
+        live_snapshot,
+        mood,
+        scanner_report,
+        strategy_report,
+        warnings=warnings,
+        now=sample_open_market_datetime(),
+        talib_config=TalibTechnicalConfig(enabled=False),
+        enable_performance_analytics=False,
+    )
+
+    assert report.report_metadata["market_memory_available"] is True
+    assert report.market_memory_summary["available"] is True
+    assert report.market_memory_context
+    memory_section = next(
+        section for section in report.sections if section.title == "Market Memory"
+    )
+    assert any("New today" in line for line in memory_section.lines)
+    candidates = next(
+        section for section in report.sections if section.title == "Top Candidates"
+    )
+    assert "Memory:" in "\n".join(candidates.lines)
+
+
 def test_executive_summary_best_ideas_use_strategy_signals() -> None:
     live_snapshot, mood, scanner_report, strategy_report, warnings = _fake_scan_bundle()
     strategy_report = StrategyReport(

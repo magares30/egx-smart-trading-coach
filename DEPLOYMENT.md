@@ -44,6 +44,29 @@ python main.py --egx-workflow report --data-provider tradingview --scanner-unive
 - On-demand report command inside the container:
   `python main.py --egx-workflow report --data-provider tradingview --scanner-universe full-market --top-candidates 10 --min-score 75`
 
+## Optional TA-Lib in Cloud Run
+
+- TA-Lib is optional. Reports must continue with TradingView technical fields and fallback metadata if TA-Lib is unavailable.
+- The Dockerfile attempts to install the Python `TA-Lib` wheel from `requirements-talib.txt` and verifies `import talib` during image build.
+- If the optional install/import fails, the image still builds and runtime reports show `TA-Lib: FALLBACK ⚠️ talib package not installed`.
+- After deploying a new image, run:
+
+```bash
+python main.py --egx-cloud-readiness-check
+```
+
+Expected when TA-Lib is present:
+
+```text
+TA-Lib runtime: ACTIVE ✅
+```
+
+If unavailable, readiness remains non-fatal and prints:
+
+```text
+TA-Lib runtime: FALLBACK ⚠️ reason: ...
+```
+
 ## Build image locally (manual)
 
 ```bash

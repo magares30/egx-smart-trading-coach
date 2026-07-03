@@ -120,6 +120,17 @@ from core.closed_market_digest import (
     build_closed_market_digest,
     format_closed_market_digest_report_lines,
 )
+from core.market_memory import (
+    STATUS_BLOCKED,
+    STATUS_CANDIDATE,
+    STATUS_POSITION,
+    STATUS_SIGNAL,
+    STATUS_WATCH,
+    SymbolObservation,
+    enrich_section_lines_with_memory,
+    format_market_memory_report_lines,
+    process_market_memory,
+)
 from core.talib_technical import (
     TALIB_NOT_INSTALLED_WARNING,
     TALIB_STATUS_FALLBACK,
@@ -153,6 +164,110 @@ def _safe_snapshot_volume(volume: float | None) -> float:
     return max(numeric, 0.0)
 
 
+def _sector_for_symbol(frame: pd.DataFrame, symbol: str) -> str | None:
+    """Best-effort sector lookup from normalized provider frames."""
+    if frame.empty or "symbol" not in frame.columns:
+        return None
+    row = row_for_symbol(frame, symbol)
+    for column in ("sector", "sector_name", "Sector", "basic_sector"):
+        if hasattr(row, "index"):
+            has_column = column in row.index
+        else:
+            has_column = isinstance(row, dict) and column in row
+        if has_column:
+            value = row.get(column)
+            if value is not None and pd.notna(value) and str(value).strip():
+                return str(value).strip()
+    return None
+
+
+def _build_market_memory_observations(
+    *,
+    strategy_items: list[StrategyResult],
+    display_candidates: list[ScannerResult],
+    scanner_report: ScannerReport,
+    paper_portfolio_payload: dict[str, object],
+    ranking_frame: pd.DataFrame,
+) -> list[SymbolObservation]:
+    """Collect compact current report observations for Market Memory."""
+    observations: list[SymbolObservation] = []
+
+    for rank, item in enumerate(strategy_items, start=1):
+        if item.decision.value == "BUY_SETUP":
+            status = STATUS_SIGNAL
+        elif item.decision.value == "WATCH":
+            status = STATUS_WATCH
+        elif item.decision.value == "BLOCKED":
+            status = STATUS_BLOCKED
+        else:
+            status = STATUS_WATCH
+        observations.append(
+            SymbolObservation(
+                symbol=item.symbol,
+                status=status,
+                score=item.confidence_score,
+                change_pct=None,
+                sector=_sector_for_symbol(ranking_frame, item.symbol),
+                rank=rank,
+            )
+        )
+
+    for rank, item in enumerate(display_candidates, start=1):
+        observations.append(
+            SymbolObservation(
+                symbol=item.symbol,
+                status=STATUS_CANDIDATE,
+                score=item.score,
+                change_pct=item.change_percent,
+                sector=_sector_for_symbol(ranking_frame, item.symbol),
+                rank=rank,
+            )
+        )
+
+    for rank, item in enumerate(scanner_report.watchlist, start=1):
+        observations.append(
+            SymbolObservation(
+                symbol=item.symbol,
+                status=STATUS_WATCH,
+                score=item.score,
+                change_pct=item.change_percent,
+                sector=_sector_for_symbol(ranking_frame, item.symbol),
+                rank=rank,
+            )
+        )
+
+    for rank, item in enumerate(scanner_report.blocked, start=1):
+        observations.append(
+            SymbolObservation(
+                symbol=item.symbol,
+                status=STATUS_BLOCKED,
+                score=item.score,
+                change_pct=item.change_percent,
+                sector=_sector_for_symbol(ranking_frame, item.symbol),
+                rank=rank,
+            )
+        )
+
+    for position in paper_portfolio_payload.get("positions", []):
+        if not isinstance(position, dict):
+            continue
+        symbol = str(position.get("symbol", "")).strip().upper()
+        if not symbol:
+            continue
+        observations.append(
+            SymbolObservation(
+                symbol=symbol,
+                status=STATUS_POSITION,
+                score=None,
+                change_pct=None,
+                sector=_sector_for_symbol(ranking_frame, symbol),
+                rank=None,
+            )
+        )
+
+    return observations
+
+
 class DailyReportSection(BaseModel):
     title: str
     lines: list[str] = Field(default_factory=list)
@@ -177,6 +292,8 @@ class DailyReport(BaseModel):
     exit_plan_summary: dict[str, object] = Field(default_factory=dict)
     confirmation_summary: dict[str, object] = Field(default_factory=dict)
     candidate_talib_technical: list[dict[str, object]] = Field(default_factory=list)
+    market_memory_summary: dict[str, object] = Field(default_factory=dict)
+    market_memory_context: dict[str, dict[str, object]] = Field(default_factory=dict)
     report_metadata: dict[str, object] = Field(default_factory=dict)
 
 
@@ -694,6 +811,29 @@ class DailyReportBuilder:
                 )
             )
 
+        (
+            market_memory_available,
+            market_memory_context,
+            market_memory_summary,
+        ) = process_market_memory(
+            _build_market_memory_observations(
+                strategy_items=strategy_items,
+                display_candidates=display_candidates,
+                scanner_report=scanner_report,
+                paper_portfolio_payload=paper_portfolio_payload,
+                ranking_frame=ranking_frame,
+            ),
+            report_date=live_snapshot.as_of_date,
+        )
+        candidate_lines = enrich_section_lines_with_memory(
+            candidate_lines,
+            market_memory_context,
+        )
+        strategy_lines = enrich_section_lines_with_memory(
+            strategy_lines,
+            market_memory_context,
+        )
+
         market_symbol_snapshots = quality_filtered_symbol_snapshots(
             live_snapshot,
             quality_filter_result,
@@ -740,6 +880,10 @@ class DailyReportBuilder:
                 watch_lines.extend(self._format_scanner_item(index, item))
             if not watch_lines:
                 watch_lines = ["- (none)"]
+        watch_lines = enrich_section_lines_with_memory(
+            watch_lines,
+            market_memory_context,
+        )
 
         blocked_lines = self._blocked_reason_counts(scanner_report)
 
@@ -834,13 +978,17 @@ class DailyReportBuilder:
             )
         sections.extend(
             [
-            DailyReportSection(
-                title="Executive Summary",
-                lines=executive_summary.to_lines(),
-            ),
-            DailyReportSection(title="Summary", lines=summary_lines),
-            DailyReportSection(title="Market Session", lines=market_session_lines),
-            DailyReportSection(title="Candidate Filters", lines=filter_lines),
+                DailyReportSection(
+                    title="Executive Summary",
+                    lines=executive_summary.to_lines(),
+                ),
+                DailyReportSection(title="Summary", lines=summary_lines),
+                DailyReportSection(title="Market Session", lines=market_session_lines),
+                DailyReportSection(title="Candidate Filters", lines=filter_lines),
+                DailyReportSection(
+                    title="Market Memory",
+                    lines=format_market_memory_report_lines(market_memory_summary),
+                ),
             ]
         )
         if quality_lines:
@@ -892,6 +1040,27 @@ class DailyReportBuilder:
             ]
         )
 
+        confirmation_summary_payload = confirmation_summary.to_dict()
+        for signal in confirmation_summary_payload.get("signals", []):
+            if not isinstance(signal, dict):
+                continue
+            symbol = str(signal.get("symbol", "")).upper()
+            memory_context = market_memory_context.get(symbol)
+            if memory_context:
+                signal.update(memory_context)
+
+        report_metadata_payload = build_report_metadata_payload(
+            data_provider=data_provider,
+            market_session=market_session_result.to_dict(),
+            paper_portfolio_payload=paper_portfolio_payload,
+            paper_performance_payload=paper_performance_payload,
+            storage_on_server=portfolio_storage_available,
+            talib_runtime=talib_runtime.to_metadata(),
+            tradingview_technical_available=tradingview_technical_available,
+            closed_market_digest=closed_market_digest_payload,
+        )
+        report_metadata_payload["market_memory_available"] = market_memory_available
+
         return DailyReport(
             report_date=live_snapshot.as_of_date,
             source=REPORT_SOURCE_LIVE_SNAPSHOT,
@@ -912,18 +1081,11 @@ class DailyReportBuilder:
             executive_summary=executive_summary.to_dict(),
             decision_summary=decision_summary.to_dict(),
             exit_plan_summary=exit_plan_summary.to_dict(),
-            confirmation_summary=confirmation_summary.to_dict(),
+            confirmation_summary=confirmation_summary_payload,
             candidate_talib_technical=candidate_talib_technical,
-            report_metadata=build_report_metadata_payload(
-                data_provider=data_provider,
-                market_session=market_session_result.to_dict(),
-                paper_portfolio_payload=paper_portfolio_payload,
-                paper_performance_payload=paper_performance_payload,
-                storage_on_server=portfolio_storage_available,
-                talib_runtime=talib_runtime.to_metadata(),
-                tradingview_technical_available=tradingview_technical_available,
-                closed_market_digest=closed_market_digest_payload,
-            ),
+            market_memory_summary=market_memory_summary,
+            market_memory_context=market_memory_context,
+            report_metadata=report_metadata_payload,
         )
 
 

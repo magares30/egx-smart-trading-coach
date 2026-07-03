@@ -322,6 +322,44 @@ def test_daily_overview_formatter() -> None:
     assert "TA-Lib: ACTIVE" in text
 
 
+def test_daily_overview_includes_market_memory_block() -> None:
+    payload = _sample_payload()
+    payload["market_memory_summary"] = {
+        "available": True,
+        "new": ["ELKA"],
+        "improving": ["LCSW"],
+        "persistent": ["TANM"],
+        "fading": ["ABUK"],
+        "weakening": [],
+    }
+
+    text = format_daily_overview(payload)
+
+    assert "🧠 ذاكرة السوق:" in text
+    assert "بيتحسن: LCSW" in text
+    assert "بيضعف: ABUK" in text
+
+
+def test_symbol_why_includes_market_memory() -> None:
+    payload = _sample_payload()
+    payload["market_memory_context"] = {
+        "ELKA": {
+            "memory_label": "IMPROVING",
+            "appearances_total": 3,
+            "recent_appearances": 2,
+            "previous_score": 65,
+            "last_score": 80,
+            "previous_status": "WATCH",
+            "last_status": "CANDIDATE",
+        }
+    }
+
+    text = format_symbol_why(payload, "ELKA")
+
+    assert "ذاكرة السهم: IMPROVING" in text
+    assert "65" in text and "80" in text
+
+
 def test_daily_overview_shows_talib_fallback() -> None:
     payload = _sample_payload()
     payload["report_metadata"] = {

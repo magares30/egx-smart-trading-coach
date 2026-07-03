@@ -21,6 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STORAGE_DIR = PROJECT_ROOT / "storage"
 PORTFOLIO_STATE_PATH = STORAGE_DIR / "portfolio_state.json"
 TRADES_PATH = STORAGE_DIR / "trades.json"
+MARKET_MEMORY_PATH = STORAGE_DIR / "market_memory.json"
 DATA_DIR = PROJECT_ROOT / "data"
 SAMPLES_DIR = DATA_DIR / "samples"
 SAMPLE_PRICES_PATH = DATA_DIR / "sample_prices.csv"

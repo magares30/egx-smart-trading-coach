@@ -23,6 +23,10 @@ from core.closed_market_digest import (
     format_closed_market_digest_arabic_block,
     format_closed_market_reason_arabic,
 )
+from core.market_memory import (
+    format_market_memory_arabic_block,
+    format_symbol_memory_arabic_lines,
+)
 from core.talib_technical import format_talib_runtime_telegram_line
 
 logger = logging.getLogger(__name__)
@@ -281,6 +285,22 @@ def _watch_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return _parse_grouped_section(_section_lines(payload, "Watch List"))
 
 
+def _market_memory_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    summary = payload.get("market_memory_summary") or {}
+    return summary if isinstance(summary, dict) else {}
+
+
+def _market_memory_context_for_symbol(
+    payload: dict[str, Any],
+    symbol: str,
+) -> dict[str, Any] | None:
+    context = payload.get("market_memory_context") or {}
+    if not isinstance(context, dict):
+        return None
+    value = context.get(symbol.upper())
+    return value if isinstance(value, dict) else None
+
+
 def collect_why_symbols(
     payload: dict[str, Any] | None,
     *,
@@ -331,6 +351,7 @@ def format_daily_overview(payload: dict[str, Any] | None) -> str:
 
     lines: list[str] = []
     lines.extend(format_closed_market_digest_arabic_block(closed_digest))
+    lines.extend(format_market_memory_arabic_block(_market_memory_summary(payload)))
     lines.extend(
         [
             f"📅 التاريخ: {payload.get('report_date', 'غير متاح')}",
@@ -370,6 +391,7 @@ def format_best_opportunities(payload: dict[str, Any] | None, *, limit: int = 5)
         return "مفيش فرص واضحة في آخر تقرير."
 
     lines = ["🔥 أفضل الفرص:", ""]
+    lines.extend(format_market_memory_arabic_block(_market_memory_summary(payload)))
     for index, signal in enumerate(signals, start=1):
         lines.extend(_format_signal_block(signal, index=index))
         lines.append("")
@@ -421,6 +443,7 @@ def format_best_three(payload: dict[str, Any] | None) -> str:
         return "مفيش فرص واضحة في آخر تقرير."
 
     lines = ["📌 أفضل 3 بس:", ""]
+    lines.extend(format_market_memory_arabic_block(_market_memory_summary(payload)))
     lines.extend(_format_signal_short(signal, index=index) for index, signal in enumerate(signals, start=1))
     lines.extend(["", "دي متابعة مش تنفيذ حقيقي."])
     return "\n".join(lines)
@@ -451,6 +474,7 @@ def format_next_session_watch(payload: dict[str, Any] | None, *, limit: int = 5)
     metadata = payload.get("report_metadata") or {}
     closed_digest = metadata.get("closed_market_digest") or {}
     lines = ["👀 راقب الجلسة الجاية:", ""]
+    lines.extend(format_market_memory_arabic_block(_market_memory_summary(payload)))
     if closed_digest.get("enabled") or market_session.get("status") == "CLOSED":
         lines.append("السوق مقفول دلوقتي — الإشارات دي للمتابعة مش للتنفيذ الفوري.")
         lines.append("")
@@ -977,6 +1001,9 @@ def format_symbol_why(payload: dict[str, Any] | None, symbol: str) -> str:
     lines.append(
         f"السكور: {_resolve_symbol_score(candidate=candidate, strategy=strategy, watch_item=watch_item)}"
     )
+    lines.extend(format_symbol_memory_arabic_lines(
+        _market_memory_context_for_symbol(payload, normalized)
+    ))
 
     if candidate:
         details = candidate.get("details") or []
