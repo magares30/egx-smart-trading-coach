@@ -28,7 +28,21 @@ from core.technical_confirmation import (
 )
 
 
-def test_tv_strong_timing_ready_talib_insufficient_is_good_not_weak() -> None:
+def test_confirmation_text_includes_talib_fallback_phrase() -> None:
+    from core.confirmation_summary import build_confirmation_text, ConfirmationLabel
+    from core.technical_confirmation import TechnicalStatus
+    from core.multi_timeframe import EntryTimingStatus
+    from core.talib_technical import TALIB_STATUS_FALLBACK
+
+    text = build_confirmation_text(
+        ConfirmationLabel.GOOD_CONFIRMATION,
+        tv_status=TechnicalStatus.STRONG,
+        timing_status=EntryTimingStatus.READY,
+        talib_status=TALIB_STATUS_FALLBACK,
+        talib_enabled=True,
+    )
+    assert "TA-Lib fallback" in text
+
     label = classify_confirmation_label(
         tv_status=TechnicalStatus.STRONG,
         timing_status=EntryTimingStatus.READY,

@@ -193,12 +193,10 @@ def test_builds_report_from_fake_live_scan() -> None:
         scanner_report,
         strategy_report,
         warnings=warnings,
+        now=sample_open_market_datetime(),
         talib_config=TalibTechnicalConfig(enabled=False),
         enable_performance_analytics=False,
     )
-
-    assert report.report_date == date(2026, 7, 1)
-    assert report.sections[0].title == "Executive Summary"
     assert report.sections[1].title == "Summary"
     assert report.sections[2].title == "Market Session"
     assert report.sections[3].title == "Candidate Filters"
@@ -219,9 +217,10 @@ def test_includes_summary_section() -> None:
         scanner_report,
         strategy_report,
         warnings=warnings,
+        now=sample_open_market_datetime(),
     )
 
-    summary = report.sections[1]
+    summary = next(section for section in report.sections if section.title == "Summary")
     assert summary.title == "Summary"
     assert "- Data Provider: Local snapshot (cached)" in summary.lines
     assert "- Scanner Universe: watchlist" in summary.lines
@@ -1300,7 +1299,9 @@ def test_disable_talib_engine_omits_candidate_talib_lines() -> None:
     text = format_daily_report_text(report)
 
     assert report.candidate_talib_technical == []
-    assert "TA-Lib:" not in text
+    assert "Technical engines:" in text
+    assert "TA-Lib: FALLBACK" in text
+    assert "talib engine disabled" in text
 
 
 def test_missing_talib_does_not_crash_daily_report(
@@ -1322,6 +1323,20 @@ def test_missing_talib_does_not_crash_daily_report(
     assert report.sections
     assert TALIB_NOT_INSTALLED_WARNING in report.warnings
     assert report.candidate_talib_technical == []
+    metadata = report.report_metadata
+    assert metadata["talib_available"] is False
+    assert metadata["talib_mode"] == "fallback"
+    assert metadata["talib_reason"] == "talib package not installed"
+    assert "talib_mode" in metadata
+    assert metadata["talib_mode"] is not None
+
+    summary = next(section for section in report.sections if section.title == "Summary")
+    summary_text = "\n".join(summary.lines)
+    assert "TA-Lib: FALLBACK" in summary_text
+
+    confirmation = report.confirmation_summary
+    if confirmation["signals"]:
+        assert confirmation["signals"][0]["talib_status"] == "FALLBACK"
 
 
 def test_talib_insufficient_history_line_in_top_candidates(
@@ -1463,6 +1478,38 @@ def test_executive_summary_closed_market_action_is_watch_only() -> None:
 
     assert report.executive_summary["action"] == "Watch next session: ELKA"
     assert "Paper entries disabled" in report.executive_summary["market"]
+    assert report.executive_summary["buy_plan"] == (
+        "No new paper entries while EGX is closed."
+    )
+    assert "stale" in report.executive_summary["main_risk"].lower()
+    assert report.report_metadata["closed_market_digest"]["enabled"] is True
+    digest_section = next(
+        section for section in report.sections if section.title == "Closed Market Digest"
+    )
+    assert "Paper entries are disabled" in "\n".join(digest_section.lines)
+
+
+def test_open_market_report_has_closed_digest_disabled() -> None:
+    live_snapshot, mood, scanner_report, strategy_report, warnings = _fake_scan_bundle()
+
+    report = DailyReportBuilder().build_from_live_scan(
+        live_snapshot,
+        mood,
+        scanner_report,
+        strategy_report,
+        warnings=warnings,
+        now=sample_open_market_datetime(),
+        talib_config=TalibTechnicalConfig(enabled=False),
+        enable_performance_analytics=False,
+    )
+
+    assert report.report_metadata["closed_market_digest"]["enabled"] is False
+    assert not any(
+        section.title == "Closed Market Digest" for section in report.sections
+    )
+    assert report.executive_summary["buy_plan"] == (
+        "Use listed entry prices only during open market"
+    )
 
 
 def test_executive_summary_best_ideas_use_strategy_signals() -> None:

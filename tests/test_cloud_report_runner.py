@@ -15,6 +15,7 @@ from core.cloud_report_runner import (
     REPORT_ALREADY_RUNNING_MESSAGE,
     REPORT_FAILURE_PREFIX,
     REPORT_STARTING_MESSAGE,
+    REPORT_SUCCESS_CLOSED_DIGEST_FOOTER,
     REPORT_SUCCESS_FOOTER,
     REPORT_TIMEOUT_MESSAGE,
     ReportRunLock,
@@ -232,6 +233,26 @@ def test_format_report_run_success_message() -> None:
 
     assert "📅 التاريخ: 2026-07-03" in message
     assert REPORT_SUCCESS_FOOTER in message
+
+
+def test_format_report_run_success_message_closed_market_digest() -> None:
+    result = ReportRunResult(
+        success=True,
+        returncode=0,
+        stdout_tail="ok",
+        stderr_tail="",
+        error=None,
+        latest_report_path="/tmp/report.json",
+    )
+
+    message = format_report_run_telegram_message(
+        result,
+        overview_text="📅 التاريخ: 2026-07-03",
+        closed_market_digest={"enabled": True, "reason": "weekend"},
+    )
+
+    assert REPORT_SUCCESS_CLOSED_DIGEST_FOOTER in message
+    assert REPORT_SUCCESS_FOOTER not in message
 
 
 @patch("core.cloud_report_runner.subprocess.run")

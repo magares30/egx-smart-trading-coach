@@ -18,6 +18,7 @@ from core.scanner_universe import (
     SCANNER_UNIVERSE_WATCHLIST,
 )
 from core.daily_report import DailyReportBuilder
+from core.market_hours import sample_open_market_datetime
 from core.market_data import MarketSnapshot
 from core.market_mood import MarketMood, MarketMoodResult
 from core.scanner import ScannerReport
@@ -135,6 +136,7 @@ def test_daily_report_prints_scanner_universe(tmp_path: Path) -> None:
         strategy_report,
         warnings=[],
         scanner_universe=SCANNER_UNIVERSE_FULL_MARKET,
+        now=sample_open_market_datetime(),
     )
 
     summary = next(

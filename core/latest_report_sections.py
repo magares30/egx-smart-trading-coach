@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from core.market_data_providers import format_data_provider_label
+from core.talib_technical import format_talib_runtime_telegram_line
 
 CLOUD_PORTFOLIO_STATE_MESSAGE = (
     "مفيش محفظة ورقية محفوظة على السيرفر لسه. "
@@ -28,9 +29,17 @@ def build_report_metadata_payload(
     paper_performance_payload: dict[str, object],
     storage_on_server: bool,
     generated_at: datetime | None = None,
+    talib_runtime: dict[str, object] | None = None,
+    tradingview_technical_available: bool | None = None,
+    closed_market_digest: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Build report metadata stored alongside the daily report JSON."""
     timestamp = generated_at or datetime.now().astimezone()
+    talib_fields = talib_runtime or {
+        "talib_available": False,
+        "talib_mode": "fallback",
+        "talib_reason": "talib runtime status unavailable",
+    }
     return {
         "generated_at": timestamp.isoformat(),
         "data_provider": data_provider or "unknown",
@@ -39,6 +48,15 @@ def build_report_metadata_payload(
         "paper_portfolio_present": bool(paper_portfolio_payload.get("available")),
         "paper_performance_present": bool(paper_performance_payload.get("available")),
         "paper_portfolio_storage_on_server": storage_on_server,
+        "talib_available": bool(talib_fields.get("talib_available")),
+        "talib_mode": str(talib_fields.get("talib_mode") or "fallback"),
+        "talib_reason": str(talib_fields.get("talib_reason") or ""),
+        "tradingview_technical_available": (
+            bool(tradingview_technical_available)
+            if tradingview_technical_available is not None
+            else False
+        ),
+        "closed_market_digest": closed_market_digest or {"enabled": False},
     }
 
 
@@ -104,6 +122,11 @@ def extract_report_metadata(payload: dict[str, Any] | None) -> dict[str, Any]:
         "paper_portfolio_present": bool(paper_portfolio_present),
         "paper_performance_present": bool(paper_performance_present),
         "paper_portfolio_storage_on_server": storage_on_server,
+        "talib_available": stored.get("talib_available"),
+        "talib_mode": stored.get("talib_mode"),
+        "talib_reason": stored.get("talib_reason"),
+        "tradingview_technical_available": stored.get("tradingview_technical_available"),
+        "closed_market_digest": stored.get("closed_market_digest") or {"enabled": False},
     }
 
 
@@ -140,6 +163,15 @@ def format_report_metadata_block(payload: dict[str, Any] | None) -> list[str]:
         lines.append("📊 بيانات المحفظة في التقرير: متوفرة")
     else:
         lines.append("📊 بيانات المحفظة في التقرير: غير متوفرة")
+
+    talib_runtime = payload.get("report_metadata") if payload else None
+    lines.append(format_talib_runtime_telegram_line(talib_runtime))
+
+    tv_available = metadata.get("tradingview_technical_available")
+    if tv_available is True:
+        lines.append("TradingView technical: ACTIVE ✅")
+    elif tv_available is False:
+        lines.append("TradingView technical: UNAVAILABLE")
 
     return lines
 

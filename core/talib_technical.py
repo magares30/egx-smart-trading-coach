@@ -24,6 +24,12 @@ except ImportError:  # pragma: no cover - exercised when talib is missing
     TALIB_AVAILABLE = False
 
 TALIB_NOT_INSTALLED_WARNING = "TA-Lib is not installed; local indicator engine disabled"
+TALIB_ENGINE_DISABLED_REASON = "talib engine disabled"
+TALIB_PACKAGE_NOT_INSTALLED_REASON = "talib package not installed"
+TALIB_MODE_ACTIVE = "active"
+TALIB_MODE_FALLBACK = "fallback"
+TALIB_STATUS_FALLBACK = "FALLBACK"
+TALIB_RUNTIME_LOG_PREFIX = "TALIB_RUNTIME_STATUS"
 TALIB_INSUFFICIENT_HISTORY_NOTE = "Need more saved history snapshots"
 DEFAULT_ATR_HIGH_PCT = 3.0
 DEFAULT_ATR_LOW_PCT = 1.0
@@ -124,6 +130,113 @@ def build_talib_technical_config_from_cli(
 def is_talib_engine_available() -> bool:
     """Return True when TA-Lib can be imported."""
     return TALIB_AVAILABLE
+
+
+@dataclass(frozen=True)
+class TalibRuntimeStatus:
+    """Runtime availability of the TA-Lib engine for report metadata."""
+
+    talib_available: bool
+    talib_mode: str
+    talib_reason: str
+
+    def to_metadata(self) -> dict[str, object]:
+        return {
+            "talib_available": self.talib_available,
+            "talib_mode": self.talib_mode,
+            "talib_reason": self.talib_reason,
+        }
+
+
+def resolve_talib_runtime_status(
+    *,
+    enabled: bool = True,
+    package_installed: bool | None = None,
+) -> TalibRuntimeStatus:
+    """Resolve whether TA-Lib is active or in fallback mode for this report run."""
+    if not enabled:
+        return TalibRuntimeStatus(
+            talib_available=False,
+            talib_mode=TALIB_MODE_FALLBACK,
+            talib_reason=TALIB_ENGINE_DISABLED_REASON,
+        )
+
+    installed = TALIB_AVAILABLE if package_installed is None else package_installed
+    if not installed:
+        return TalibRuntimeStatus(
+            talib_available=False,
+            talib_mode=TALIB_MODE_FALLBACK,
+            talib_reason=TALIB_PACKAGE_NOT_INSTALLED_REASON,
+        )
+
+    return TalibRuntimeStatus(
+        talib_available=True,
+        talib_mode=TALIB_MODE_ACTIVE,
+        talib_reason="",
+    )
+
+
+def format_talib_runtime_log_line(status: TalibRuntimeStatus) -> str:
+    """Safe single-line log for report startup."""
+    if status.talib_available:
+        return (
+            f"{TALIB_RUNTIME_LOG_PREFIX} available=true mode={status.talib_mode}"
+        )
+    reason = status.talib_reason or "unknown"
+    return (
+        f"{TALIB_RUNTIME_LOG_PREFIX} available=false mode={status.talib_mode} "
+        f"reason={reason}"
+    )
+
+
+def format_technical_engines_report_lines(
+    talib_runtime: TalibRuntimeStatus,
+    *,
+    tradingview_technical_available: bool,
+) -> list[str]:
+    """Compact technical-engine status lines for the daily report Summary section."""
+    tv_line = (
+        "- TradingView technical: ACTIVE ✅"
+        if tradingview_technical_available
+        else "- TradingView technical: UNAVAILABLE"
+    )
+    if talib_runtime.talib_available:
+        talib_line = "- TA-Lib: ACTIVE ✅"
+    else:
+        reason = talib_runtime.talib_reason or "unavailable"
+        talib_line = f"- TA-Lib: FALLBACK ⚠️ {reason}"
+    return ["Technical engines:", tv_line, talib_line]
+
+
+def format_talib_runtime_telegram_line(
+    talib_runtime: TalibRuntimeStatus | dict[str, object] | None,
+) -> str:
+    """Single Telegram metadata line for TA-Lib runtime."""
+    if talib_runtime is None:
+        return "TA-Lib: FALLBACK ⚠️ status unknown"
+
+    if isinstance(talib_runtime, dict):
+        available = bool(talib_runtime.get("talib_available"))
+        reason = str(talib_runtime.get("talib_reason") or "")
+    else:
+        available = talib_runtime.talib_available
+        reason = talib_runtime.talib_reason
+
+    if available:
+        return "TA-Lib: ACTIVE ✅"
+    reason_text = reason or "unavailable"
+    return f"TA-Lib: FALLBACK ⚠️ {reason_text}"
+
+
+def format_talib_runtime_readiness_line(
+    talib_runtime: TalibRuntimeStatus | None = None,
+) -> str:
+    """Explicit TA-Lib runtime line for cloud readiness output."""
+    status = talib_runtime or resolve_talib_runtime_status(enabled=True)
+    if status.talib_available:
+        return "TA-Lib runtime: ACTIVE ✅"
+    reason = status.talib_reason or "unavailable"
+    return f"TA-Lib runtime: FALLBACK ⚠️ reason: {reason}"
 
 
 def _last_valid(values: np.ndarray) -> float | None:

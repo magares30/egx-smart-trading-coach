@@ -38,6 +38,10 @@ def _cloud_payload_without_portfolio() -> dict:
             "paper_portfolio_present": False,
             "paper_performance_present": False,
             "paper_portfolio_storage_on_server": False,
+            "talib_available": False,
+            "talib_mode": "fallback",
+            "talib_reason": "talib package not installed",
+            "tradingview_technical_available": True,
         },
         "sections": [
             {
@@ -54,6 +58,27 @@ def _cloud_payload_without_portfolio() -> dict:
             },
         ],
     }
+
+
+def test_build_report_metadata_payload_includes_talib_runtime_fields() -> None:
+    payload = build_report_metadata_payload(
+        data_provider="tradingview",
+        market_session={"status": "CLOSED"},
+        paper_portfolio_payload={"available": False},
+        paper_performance_payload={"available": False},
+        storage_on_server=False,
+        talib_runtime={
+            "talib_available": False,
+            "talib_mode": "fallback",
+            "talib_reason": "talib package not installed",
+        },
+        tradingview_technical_available=True,
+    )
+
+    assert payload["talib_available"] is False
+    assert payload["talib_mode"] == "fallback"
+    assert payload["talib_reason"] == "talib package not installed"
+    assert payload["tradingview_technical_available"] is True
 
 
 def test_build_report_metadata_payload_includes_cloud_flags() -> None:
@@ -113,5 +138,7 @@ def test_format_report_metadata_block_is_safe_and_informative() -> None:
     assert "TradingView" in text
     assert "CLOSED" in text
     assert "غير محفوظة" in text
+    assert "TA-Lib: FALLBACK" in text
+    assert "TradingView technical: ACTIVE" in text
     assert "1234567890:AA" not in text
     assert CLOUD_PORTFOLIO_STATE_MESSAGE not in text

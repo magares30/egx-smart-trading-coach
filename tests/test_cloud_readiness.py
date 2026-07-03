@@ -54,10 +54,11 @@ def test_check_tradingview_screener_import_failure(
 def test_check_talib_optional_warning_when_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("core.cloud_readiness.is_talib_engine_available", lambda: False)
+    monkeypatch.setattr("core.talib_technical.TALIB_AVAILABLE", False)
     check = check_talib_optional()
     assert check.status is CheckStatus.WARNING
-    assert "not installed" in check.detail.lower()
+    assert "FALLBACK" in check.detail
+    assert "talib package not installed" in check.detail
 
 
 def test_check_directory_creates_path(tmp_path: Path) -> None:
@@ -126,14 +127,26 @@ def test_readiness_exit_code_treats_warnings_as_success() -> None:
     assert readiness_exit_code(checks_with_error) == 1
 
 
+def test_format_readiness_report_includes_talib_runtime_line(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr("core.talib_technical.TALIB_AVAILABLE", False)
+    checks = run_cloud_readiness_checks(
+        reports_dir=tmp_path / "reports",
+        storage_dir=tmp_path / "storage",
+        check_token=False,
+    )
+    report = format_readiness_report(checks)
+    assert "TA-Lib runtime: FALLBACK" in report
+    assert "talib package not installed" in report
+
+
 def test_format_readiness_report_never_leaks_token(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(
-        "core.cloud_readiness.is_talib_engine_available",
-        lambda: False,
-    )
+    monkeypatch.setattr("core.talib_technical.TALIB_AVAILABLE", False)
     with patch.dict(os.environ, {TELEGRAM_BOT_TOKEN_ENV: "1234567890:AAFakeTokenValue"}, clear=False):
         checks = run_cloud_readiness_checks(
             reports_dir=tmp_path / "reports",
@@ -151,10 +164,7 @@ def test_format_cloud_readiness_telegram_summary_is_safe(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(
-        "core.cloud_readiness.is_talib_engine_available",
-        lambda: False,
-    )
+    monkeypatch.setattr("core.talib_technical.TALIB_AVAILABLE", False)
     with patch.dict(os.environ, {TELEGRAM_BOT_TOKEN_ENV: "1234567890:AAFakeTokenValue"}, clear=False):
         checks = run_cloud_readiness_checks(
             reports_dir=tmp_path / "reports",

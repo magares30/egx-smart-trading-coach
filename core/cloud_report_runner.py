@@ -19,6 +19,9 @@ OUTPUT_TAIL_MAX_CHARS = 4000
 REPORT_ALREADY_RUNNING_MESSAGE = "في تقرير بيتحدّث دلوقتي، استنى لما يخلص."
 REPORT_STARTING_MESSAGE = "تمام، بحدّث التقرير دلوقتي من السيرفر... استنى دقيقة."
 REPORT_SUCCESS_FOOTER = "التقرير اتحدّث من السيرفر ✅"
+REPORT_SUCCESS_CLOSED_DIGEST_FOOTER = (
+    "التقرير اتحدث كـ Closed Market Digest من آخر بيانات متاحة ✅"
+)
 REPORT_TIMEOUT_MESSAGE = "التقرير خد وقت زيادة ومكملش. جرّبه تاني بعد شوية."
 REPORT_FAILURE_PREFIX = "التقرير فشل من السيرفر. السبب اتسجل في اللوج بشكل آمن."
 REDACTED_TELEGRAM_TOKEN = "[REDACTED_TELEGRAM_TOKEN]"
@@ -295,6 +298,7 @@ def format_report_run_telegram_message(
     result: ReportRunResult,
     *,
     overview_text: str | None = None,
+    closed_market_digest: dict[str, object] | None = None,
 ) -> str:
     """Build the Telegram reply after a cloud report run."""
     if result.error == "timeout":
@@ -302,7 +306,12 @@ def format_report_run_telegram_message(
 
     if result.success:
         overview = overview_text or "تم حفظ التقرير."
-        return f"{overview}\n\n{REPORT_SUCCESS_FOOTER}"
+        footer = (
+            REPORT_SUCCESS_CLOSED_DIGEST_FOOTER
+            if closed_market_digest and closed_market_digest.get("enabled")
+            else REPORT_SUCCESS_FOOTER
+        )
+        return f"{overview}\n\n{footer}"
 
     lines = [REPORT_FAILURE_PREFIX]
     hint_source = result.stderr_tail or result.stdout_tail

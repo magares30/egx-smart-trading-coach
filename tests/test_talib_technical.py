@@ -20,9 +20,12 @@ from core.talib_technical import (
     build_talib_lookup_for_symbols,
     build_talib_technical_config_from_cli,
     evaluate_talib_technical_from_bars,
-    format_talib_strategy_note,
+    format_talib_runtime_log_line,
     format_talib_technical_line,
+    format_talib_strategy_note,
+    format_technical_engines_report_lines,
     is_talib_engine_available,
+    resolve_talib_runtime_status,
 )
 
 
@@ -201,3 +204,48 @@ def test_default_min_history_days_matches_settings() -> None:
 def test_is_talib_engine_available_when_installed() -> None:
     _require_talib()
     assert is_talib_engine_available() is True
+
+
+def test_resolve_talib_runtime_status_active_when_installed() -> None:
+    status = resolve_talib_runtime_status(enabled=True, package_installed=True)
+    assert status.talib_available is True
+    assert status.talib_mode == "active"
+    assert status.talib_reason == ""
+
+
+def test_resolve_talib_runtime_status_fallback_when_not_installed() -> None:
+    status = resolve_talib_runtime_status(enabled=True, package_installed=False)
+    assert status.talib_available is False
+    assert status.talib_mode == "fallback"
+    assert status.talib_reason == "talib package not installed"
+
+
+def test_resolve_talib_runtime_status_fallback_when_disabled() -> None:
+    status = resolve_talib_runtime_status(enabled=False, package_installed=True)
+    assert status.talib_available is False
+    assert status.talib_mode == "fallback"
+    assert status.talib_reason == "talib engine disabled"
+
+
+def test_format_talib_runtime_log_line_fallback() -> None:
+    status = resolve_talib_runtime_status(enabled=True, package_installed=False)
+    line = format_talib_runtime_log_line(status)
+    assert "TALIB_RUNTIME_STATUS available=false mode=fallback" in line
+    assert "talib package not installed" in line
+
+
+def test_format_technical_engines_report_lines() -> None:
+    active = resolve_talib_runtime_status(enabled=True, package_installed=True)
+    lines = format_technical_engines_report_lines(
+        active,
+        tradingview_technical_available=True,
+    )
+    assert any("TradingView technical: ACTIVE" in line for line in lines)
+    assert any("TA-Lib: ACTIVE" in line for line in lines)
+
+    fallback = resolve_talib_runtime_status(enabled=True, package_installed=False)
+    lines = format_technical_engines_report_lines(
+        fallback,
+        tradingview_technical_available=False,
+    )
+    assert any("TA-Lib: FALLBACK" in line for line in lines)

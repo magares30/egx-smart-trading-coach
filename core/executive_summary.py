@@ -19,6 +19,11 @@ from core.market_breadth_mood import (
     MarketBreadthMoodResult,
 )
 from core.market_hours import EgxMarketSession
+from core.closed_market_digest import (
+    CLOSED_BUY_PLAN_TEXT,
+    CLOSED_MAIN_RISK_TEXT,
+    closed_market_digest_enabled,
+)
 from core.market_mood import MarketMoodResult
 from core.scanner import ScannerResult
 from core.strategy import StrategyResult
@@ -172,6 +177,9 @@ def _pick_main_risk(
     *,
     session: EgxMarketSession,
 ) -> str:
+    if closed_market_digest_enabled(session):
+        return CLOSED_MAIN_RISK_TEXT
+
     if session.guard_enabled and not session.paper_entries_enabled:
         return "Market closed; paper entries disabled"
 
@@ -226,6 +234,11 @@ def build_executive_summary(
     )
     performance_payload = paper_performance_payload or {}
     portfolio_payload = paper_portfolio_payload or {}
+    buy_plan = (
+        CLOSED_BUY_PLAN_TEXT
+        if closed_market_digest_enabled(market_session)
+        else BUY_PLAN_TEXT
+    )
 
     return ExecutiveSummary(
         market=_build_market_line(market_session, mood_label),
@@ -234,7 +247,7 @@ def build_executive_summary(
             session=market_session,
             decision_summary=decision_summary,
         ),
-        buy_plan=BUY_PLAN_TEXT,
+        buy_plan=buy_plan,
         sell_plan=SELL_PLAN_TEXT,
         paper_pnl=_build_paper_pnl_line(performance_payload, portfolio_payload),
         exit_plan=build_executive_exit_plan_line(

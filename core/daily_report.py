@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import Counter
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from config.watchlist import DEFAULT_WATCHLIST
 from core.live_snapshot import LiveMarketSnapshot
 from core.live_volume import LiveVolumeHistoryStore
 from core.market_hours import (
+    CAIRO_TZ,
     EgxMarketSession,
     detect_egx_market_session,
     format_market_session_report_lines,
@@ -114,19 +116,28 @@ from core.portfolio_report import (
     paper_portfolio_storage_exists,
 )
 from core.latest_report_sections import build_report_metadata_payload
+from core.closed_market_digest import (
+    build_closed_market_digest,
+    format_closed_market_digest_report_lines,
+)
 from core.talib_technical import (
+    TALIB_NOT_INSTALLED_WARNING,
+    TALIB_STATUS_FALLBACK,
     TalibTechnicalConfig,
     TalibTechnicalResult,
     build_talib_lookup_for_symbols,
+    format_talib_runtime_log_line,
     format_talib_technical_line,
+    format_technical_engines_report_lines,
     is_talib_engine_available,
-    TALIB_NOT_INSTALLED_WARNING,
+    resolve_talib_runtime_status,
 )
 from core.strategy import StrategyReport, StrategyResult
 from core.warning_formatting import summarize_daily_report_warnings
 
 REPORT_SOURCE_LIVE_SNAPSHOT = "EGX Live Snapshot"
 MAX_LIST_ITEMS = 10
+logger = logging.getLogger(__name__)
 
 
 def _safe_snapshot_volume(volume: float | None) -> float:
@@ -342,6 +353,8 @@ class DailyReportBuilder:
         fundamental_values = FundamentalQualityConfig()
         multi_timeframe_values = multi_timeframe_config or MultiTimeframeConfig()
         talib_values = talib_config or TalibTechnicalConfig()
+        talib_runtime = resolve_talib_runtime_status(enabled=talib_values.enabled)
+        logger.info(format_talib_runtime_log_line(talib_runtime))
         market_session_result = (
             market_session
             if market_session is not None
@@ -390,6 +403,15 @@ class DailyReportBuilder:
             f"- Watch: {len(scanner_report.watchlist)}",
             f"- Blocked: {len(scanner_report.blocked)}",
         ]
+        tradingview_technical_available = (
+            technical_values.enabled and technical_available
+        )
+        summary_lines.extend(
+            format_technical_engines_report_lines(
+                talib_runtime,
+                tradingview_technical_available=tradingview_technical_available,
+            )
+        )
         filter_lines = (
             build_candidate_filter_summary_lines(filters)
             + build_candidate_ranking_summary_lines(
@@ -603,11 +625,20 @@ class DailyReportBuilder:
                 if talib_values.enabled
                 else None
             )
+            effective_talib_status = (
+                talib_result.status
+                if talib_result is not None
+                else (
+                    TALIB_STATUS_FALLBACK
+                    if talib_values.enabled and not talib_runtime.talib_available
+                    else None
+                )
+            )
             signal_confirmation = build_signal_confirmation_summary(
                 item.symbol,
                 tv_status=tv_result.status if tv_result is not None else None,
                 timing_status=timing_status,
-                talib_status=talib_result.status if talib_result is not None else None,
+                talib_status=effective_talib_status,
                 talib_enabled=talib_values.enabled,
             )
             signal_confirmations.append(signal_confirmation)
@@ -781,7 +812,28 @@ class DailyReportBuilder:
             signal_confirmations=signal_confirmations,
         )
 
-        sections = [
+        reference_moment = (
+            now.astimezone(CAIRO_TZ) if now is not None else datetime.now(CAIRO_TZ)
+        )
+        closed_market_digest_payload = build_closed_market_digest(
+            session=market_session_result,
+            price_data_date=live_snapshot.as_of_date,
+            data_provider=data_provider,
+            as_of_date=reference_moment.date(),
+        )
+
+        sections: list[DailyReportSection] = []
+        if closed_market_digest_payload.get("enabled"):
+            sections.append(
+                DailyReportSection(
+                    title="Closed Market Digest",
+                    lines=format_closed_market_digest_report_lines(
+                        closed_market_digest_payload
+                    ),
+                )
+            )
+        sections.extend(
+            [
             DailyReportSection(
                 title="Executive Summary",
                 lines=executive_summary.to_lines(),
@@ -789,7 +841,8 @@ class DailyReportBuilder:
             DailyReportSection(title="Summary", lines=summary_lines),
             DailyReportSection(title="Market Session", lines=market_session_lines),
             DailyReportSection(title="Candidate Filters", lines=filter_lines),
-        ]
+            ]
+        )
         if quality_lines:
             sections.append(
                 DailyReportSection(title="Market Quality Filters", lines=quality_lines)
@@ -867,6 +920,9 @@ class DailyReportBuilder:
                 paper_portfolio_payload=paper_portfolio_payload,
                 paper_performance_payload=paper_performance_payload,
                 storage_on_server=portfolio_storage_available,
+                talib_runtime=talib_runtime.to_metadata(),
+                tradingview_technical_available=tradingview_technical_available,
+                closed_market_digest=closed_market_digest_payload,
             ),
         )
 

@@ -198,6 +198,16 @@ def _sample_payload() -> dict:
             "realized_pnl": 0.0,
             "open_positions_count": 1,
         },
+        "report_metadata": {
+            "generated_at": "2026-07-02T10:00:00+00:00",
+            "data_provider": "tradingview",
+            "data_provider_label": "TradingView",
+            "market_status": "CLOSED",
+            "talib_available": True,
+            "talib_mode": "active",
+            "talib_reason": "",
+            "tradingview_technical_available": True,
+        },
         "candidate_fundamentals": [
             {
                 "symbol": "ELKA",
@@ -267,6 +277,40 @@ def test_no_report_payload_message() -> None:
     assert format_best_opportunities(None) == NO_REPORT_MESSAGE
 
 
+def test_telegram_overview_includes_closed_market_arabic_block() -> None:
+    payload = _sample_payload()
+    payload["report_metadata"] = {
+        **(payload.get("report_metadata") or {}),
+        "closed_market_digest": {
+            "enabled": True,
+            "price_data_date": "2026-07-02",
+            "price_data_source": "TradingView Screener",
+            "is_price_data_stale": True,
+        },
+    }
+    text = format_daily_overview(payload)
+    assert "🔒 السوق مقفول النهارده" in text
+    assert "2026-07-02" in text
+    assert "مفيش دخول ورقي جديد" in text
+
+
+def test_market_status_includes_closed_digest_details() -> None:
+    payload = _sample_payload()
+    payload["report_metadata"] = {
+        **(payload.get("report_metadata") or {}),
+        "closed_market_digest": {
+            "enabled": True,
+            "reason": "after_hours",
+            "price_data_date": "2026-07-02",
+            "is_price_data_stale": True,
+        },
+    }
+    text = format_market_status(payload)
+    assert "آخر بيانات أسعار" in text
+    assert "2026-07-02" in text
+    assert "قد تكون قديمة" in text
+
+
 def test_daily_overview_formatter() -> None:
     text = format_daily_overview(_sample_payload())
 
@@ -275,6 +319,19 @@ def test_daily_overview_formatter() -> None:
     assert "ELKA, LCSW, TANM" in text
     assert "3 good setups" in text
     assert "Market closed" in text
+    assert "TA-Lib: ACTIVE" in text
+
+
+def test_daily_overview_shows_talib_fallback() -> None:
+    payload = _sample_payload()
+    payload["report_metadata"] = {
+        "talib_available": False,
+        "talib_mode": "fallback",
+        "talib_reason": "talib package not installed",
+    }
+    text = format_daily_overview(payload)
+    assert "TA-Lib: FALLBACK" in text
+    assert "talib package not installed" in text
 
 
 def test_best_opportunities_max_five() -> None:

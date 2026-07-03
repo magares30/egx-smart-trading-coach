@@ -16,7 +16,10 @@ from core.cloud_report_runner import (
     find_latest_report_json,
     sanitize_log_text,
 )
-from core.talib_technical import TALIB_NOT_INSTALLED_WARNING, is_talib_engine_available
+from core.talib_technical import (
+    format_talib_runtime_readiness_line,
+    resolve_talib_runtime_status,
+)
 from core.telegram_bot import TELEGRAM_BOT_TOKEN_ENV
 
 READINESS_HEADER = "=== EGX Cloud Run Readiness ==="
@@ -79,9 +82,14 @@ def check_tradingview_screener_import() -> ReadinessCheck:
 
 
 def check_talib_optional() -> ReadinessCheck:
-    if is_talib_engine_available():
-        return ReadinessCheck("talib", CheckStatus.OK, "TA-Lib available")
-    return ReadinessCheck("talib", CheckStatus.WARNING, TALIB_NOT_INSTALLED_WARNING)
+    runtime = resolve_talib_runtime_status(enabled=True)
+    if runtime.talib_available:
+        return ReadinessCheck("talib", CheckStatus.OK, format_talib_runtime_readiness_line(runtime))
+    return ReadinessCheck(
+        "talib",
+        CheckStatus.WARNING,
+        format_talib_runtime_readiness_line(runtime),
+    )
 
 
 def check_directory(path: Path, name: str) -> ReadinessCheck:
@@ -239,7 +247,7 @@ def summarize_readiness_result(checks: list[ReadinessCheck]) -> str:
 
 
 def format_readiness_report(checks: list[ReadinessCheck]) -> str:
-    lines = [READINESS_HEADER]
+    lines = [READINESS_HEADER, format_talib_runtime_readiness_line()]
     for check in checks:
         lines.append(f"[{check.status.value}] {check.name}: {check.detail}")
     lines.append(summarize_readiness_result(checks))
@@ -262,7 +270,7 @@ def format_cloud_readiness_telegram_summary(checks: list[ReadinessCheck]) -> str
         elif check.name == "latest_report" and check.status == CheckStatus.WARNING:
             detail = "no saved report yet"
         elif check.name == "talib" and check.status == CheckStatus.WARNING:
-            detail = "TA-Lib optional / unavailable"
+            detail = format_talib_runtime_readiness_line()
         else:
             detail = check.status.value.lower()
 

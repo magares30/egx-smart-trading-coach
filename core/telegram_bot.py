@@ -19,6 +19,11 @@ from core.latest_report_sections import (
     resolve_portfolio_data_status,
 )
 from core.market_hours_auto_refresh import is_auto_refresh_enabled
+from core.closed_market_digest import (
+    format_closed_market_digest_arabic_block,
+    format_closed_market_reason_arabic,
+)
+from core.talib_technical import format_talib_runtime_telegram_line
 
 logger = logging.getLogger(__name__)
 
@@ -321,8 +326,12 @@ def format_daily_overview(payload: dict[str, Any] | None) -> str:
     executive = payload.get("executive_summary") or {}
     best_ideas = executive.get("best_ideas") or []
     best_text = ", ".join(str(symbol) for symbol in best_ideas) if best_ideas else "لا يوجد"
+    metadata = payload.get("report_metadata") or {}
+    closed_digest = metadata.get("closed_market_digest") or {}
 
-    return "\n".join(
+    lines: list[str] = []
+    lines.extend(format_closed_market_digest_arabic_block(closed_digest))
+    lines.extend(
         [
             f"📅 التاريخ: {payload.get('report_date', 'غير متاح')}",
             f"📈 السوق: {executive.get('market', 'غير متاح')}",
@@ -331,8 +340,25 @@ def format_daily_overview(payload: dict[str, Any] | None) -> str:
             f"✅ التأكيد: {executive.get('confirmation', 'غير متاح')}",
             f"💰 P&L ورقي: {executive.get('paper_pnl', 'غير متاح')}",
             f"⚠️ المخاطر: {executive.get('main_risk', 'غير متاح')}",
+            format_talib_runtime_telegram_line(metadata),
         ]
     )
+
+    decision_summary = payload.get("decision_summary") or {}
+    sell_alerts = decision_summary.get("sell_alerts") or []
+    if sell_alerts:
+        lines.append(f"🚨 تنبيهات بيع (الجلسة الجاية): {', '.join(str(s) for s in sell_alerts)}")
+
+    warning_lines = [
+        str(warning).strip()
+        for warning in (payload.get("warnings") or [])
+        if str(warning).strip()
+    ][:3]
+    if warning_lines:
+        lines.append("⚠️ تحذيرات:")
+        lines.extend(f"- {warning}" for warning in warning_lines)
+
+    return "\n".join(lines)
 
 
 def format_best_opportunities(payload: dict[str, Any] | None, *, limit: int = 5) -> str:
@@ -422,8 +448,10 @@ def format_next_session_watch(payload: dict[str, Any] | None, *, limit: int = 5)
         return "مفيش أسهم للمتابعة في الجلسة الجاية حالياً."
 
     market_session = payload.get("market_session") or {}
+    metadata = payload.get("report_metadata") or {}
+    closed_digest = metadata.get("closed_market_digest") or {}
     lines = ["👀 راقب الجلسة الجاية:", ""]
-    if market_session.get("status") == "CLOSED":
+    if closed_digest.get("enabled") or market_session.get("status") == "CLOSED":
         lines.append("السوق مقفول دلوقتي — الإشارات دي للمتابعة مش للتنفيذ الفوري.")
         lines.append("")
 
@@ -760,6 +788,8 @@ def format_market_status(payload: dict[str, Any] | None) -> str:
     session = payload.get("market_session") or {}
     session_status = session.get("status", "غير متاح")
     session_note = session.get("note")
+    metadata = payload.get("report_metadata") or {}
+    closed_digest = metadata.get("closed_market_digest") or {}
 
     breadth = payload.get("market_breadth_mood") or {}
     breadth_bits: list[str] = []
@@ -778,6 +808,14 @@ def format_market_status(payload: dict[str, Any] | None) -> str:
         f"مزاج السوق: {mood_text}",
         f"جلسة السوق: {session_status}",
     ]
+    closed_reason = format_closed_market_reason_arabic(closed_digest)
+    if closed_reason:
+        lines.append(f"سبب الإغلاق: {closed_reason}")
+    if closed_digest.get("enabled"):
+        lines.append(f"📅 آخر بيانات أسعار: {closed_digest.get('price_data_date', 'غير متاح')}")
+        if closed_digest.get("is_price_data_stale"):
+            lines.append("⚠️ التقرير مبني على بيانات قد تكون قديمة لحد الجلسة الجاية")
+        lines.append("👀 المتابعة والبيع للجلسة الجاية فقط — مفيش دخول ورقي جديد")
     if session_note:
         lines.append(f"ملاحظة: {session_note}")
     if breadth_bits:
@@ -1147,10 +1185,15 @@ def run_telegram_bot() -> int:
             async def _run_cloud_report() -> None:
                 try:
                     result = await asyncio.to_thread(run_report_once)
-                    overview = format_daily_overview(load_latest_report_payload())
+                    latest_payload = load_latest_report_payload()
+                    overview = format_daily_overview(latest_payload)
+                    closed_digest = (latest_payload or {}).get("report_metadata", {}).get(
+                        "closed_market_digest"
+                    )
                     message = format_report_run_telegram_message(
                         result,
                         overview_text=overview,
+                        closed_market_digest=closed_digest,
                     )
                     await bot.send_message(
                         chat_id,

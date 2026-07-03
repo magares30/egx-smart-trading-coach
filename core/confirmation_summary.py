@@ -7,7 +7,7 @@ from enum import Enum
 
 from core.multi_timeframe import EntryTimingStatus
 from core.technical_confirmation import TechnicalStatus
-from core.talib_technical import TalibOverallStatus
+from core.talib_technical import TalibOverallStatus, TALIB_STATUS_FALLBACK
 
 CONFIRMATION_SUMMARY_NOTE = (
     "Uses existing TradingView, timing, and TA-Lib statuses; no new indicators"
@@ -105,12 +105,16 @@ def _format_timing_phrase(status: EntryTimingStatus | None) -> str:
 
 
 def _format_talib_phrase(
-    status: TalibOverallStatus | None,
+    status: TalibOverallStatus | str | None,
     *,
     talib_enabled: bool,
 ) -> str:
     if not talib_enabled:
         return "TA-Lib n/a"
+    if status == TALIB_STATUS_FALLBACK:
+        return "TA-Lib fallback"
+    if not isinstance(status, TalibOverallStatus):
+        status = _coerce_talib_status(status)
     if status in _TALIB_POSITIVE:
         return "TA-Lib aligned"
     if status == TalibOverallStatus.INSUFFICIENT_HISTORY:
@@ -169,7 +173,7 @@ def build_confirmation_text(
     parts = [
         _format_tv_phrase(tv),
         _format_timing_phrase(timing),
-        _format_talib_phrase(talib, talib_enabled=talib_enabled),
+        _format_talib_phrase(talib_status, talib_enabled=talib_enabled),
     ]
     return f"Confirmation: {_display_label(label)} | {' | '.join(parts)}"
 
@@ -220,6 +224,10 @@ def build_signal_confirmation_summary(
         talib_status=talib_status,
         talib_enabled=talib_enabled,
     )
+    if talib_enabled and talib is None and talib_status == TALIB_STATUS_FALLBACK:
+        serialized_talib_status: str | None = TALIB_STATUS_FALLBACK
+    else:
+        serialized_talib_status = talib.value if talib is not None else None
     return SignalConfirmationSummary(
         symbol=symbol,
         label=label,
@@ -228,7 +236,7 @@ def build_signal_confirmation_summary(
         timing_status=(
             timing.value if (timing := _coerce_timing_status(timing_status)) else None
         ),
-        talib_status=talib.value if talib is not None else None,
+        talib_status=serialized_talib_status,
         waiting_for_history=(
             talib_enabled and talib == TalibOverallStatus.INSUFFICIENT_HISTORY
         ),
