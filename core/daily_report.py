@@ -85,6 +85,7 @@ from core.multi_timeframe import (
     row_for_symbol_timeframes,
 )
 from core.sector_momentum import (
+    SectorMomentumResult,
     build_sector_momentum,
     format_sector_momentum_lines,
     sector_status_for_symbol,
@@ -125,6 +126,12 @@ from core.confidence_score import (
     build_confidence_v2_context,
     enrich_section_lines_with_confidence_v2,
     format_confidence_v2_report_lines,
+)
+from core.sector_intelligence import (
+    SectorIntelligenceInput,
+    build_sector_intelligence_context,
+    enrich_section_lines_with_sector_intelligence,
+    format_sector_intelligence_report_lines,
 )
 from core.market_memory import (
     STATUS_BLOCKED,
@@ -286,7 +293,8 @@ def _build_confidence_v2_inputs(
     market_mood: MarketMoodResult,
     market_breadth_mood_result: MarketBreadthMoodResult | None,
     market_memory_context: dict[str, dict[str, object]],
-    sector_momentum_result: object,
+    sector_intelligence_context: dict[str, dict[str, object]],
+    sector_momentum_result: SectorMomentumResult,
     closed_market_digest: dict[str, object],
 ) -> list[ConfidenceInput]:
     """Build additive Confidence V2 inputs from existing report layers."""
@@ -332,6 +340,7 @@ def _build_confidence_v2_inputs(
             fundamental_result = evaluate_fundamental_quality(row, fundamental_config)
             talib_result = talib_lookup.get(symbol)
             memory = market_memory_context.get(symbol) or {}
+            sector_intelligence = sector_intelligence_context.get(symbol) or {}
 
             inputs.append(
                 ConfidenceInput(
@@ -357,6 +366,9 @@ def _build_confidence_v2_inputs(
                         symbol,
                         sector_momentum_result,
                     ),
+                    sector_intelligence_label=str(
+                        sector_intelligence.get("sector_label") or ""
+                    ),
                     risk_reward=(
                         strategy_item.risk_reward if strategy_item is not None else None
                     ),
@@ -368,6 +380,52 @@ def _build_confidence_v2_inputs(
             )
         except Exception as exc:  # pragma: no cover - defensive safety guard
             logger.warning("Confidence V2 input build failed for %s: %s", symbol, exc)
+    return inputs
+
+
+def _build_sector_intelligence_inputs(
+    *,
+    strategy_items: list[StrategyResult],
+    display_candidates: list[ScannerResult],
+    scanner_report: ScannerReport,
+) -> list[SectorIntelligenceInput]:
+    """Collect report symbols for per-symbol sector relationship context."""
+    strategy_by_symbol = {item.symbol: item for item in strategy_items}
+    scanner_by_symbol = {
+        item.symbol: item
+        for item in (
+            list(display_candidates)
+            + list(scanner_report.watchlist)
+            + list(scanner_report.blocked)
+        )
+    }
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for source in (strategy_items, display_candidates, scanner_report.watchlist):
+        for item in source:
+            symbol = item.symbol
+            if symbol in seen:
+                continue
+            seen.add(symbol)
+            symbols.append(symbol)
+
+    inputs: list[SectorIntelligenceInput] = []
+    for symbol in symbols:
+        strategy_item = strategy_by_symbol.get(symbol)
+        scanner_item = scanner_by_symbol.get(symbol)
+        inputs.append(
+            SectorIntelligenceInput(
+                symbol=symbol,
+                score=(
+                    strategy_item.confidence_score
+                    if strategy_item is not None
+                    else (scanner_item.score if scanner_item is not None else None)
+                ),
+                change_pct=(
+                    scanner_item.change_percent if scanner_item is not None else None
+                ),
+            )
+        )
     return inputs
 
 
@@ -397,6 +455,10 @@ class DailyReport(BaseModel):
     candidate_talib_technical: list[dict[str, object]] = Field(default_factory=list)
     market_memory_summary: dict[str, object] = Field(default_factory=dict)
     market_memory_context: dict[str, dict[str, object]] = Field(default_factory=dict)
+    sector_intelligence_summary: dict[str, object] = Field(default_factory=dict)
+    sector_intelligence_context: dict[str, dict[str, object]] = Field(
+        default_factory=dict
+    )
     confidence_v2_summary: dict[str, object] = Field(default_factory=dict)
     confidence_v2_context: dict[str, dict[str, object]] = Field(default_factory=dict)
     report_metadata: dict[str, object] = Field(default_factory=dict)
@@ -990,6 +1052,32 @@ class DailyReportBuilder:
             market_memory_context,
         )
 
+        (
+            sector_intelligence_context,
+            sector_intelligence_summary,
+            sector_intelligence_available,
+        ) = build_sector_intelligence_context(
+            _build_sector_intelligence_inputs(
+                strategy_items=strategy_items,
+                display_candidates=display_candidates,
+                scanner_report=scanner_report,
+            ),
+            snapshot_df=ranking_frame,
+            sector_momentum=sector_momentum_result,
+        )
+        candidate_lines = enrich_section_lines_with_sector_intelligence(
+            candidate_lines,
+            sector_intelligence_context,
+        )
+        strategy_lines = enrich_section_lines_with_sector_intelligence(
+            strategy_lines,
+            sector_intelligence_context,
+        )
+        watch_lines = enrich_section_lines_with_sector_intelligence(
+            watch_lines,
+            sector_intelligence_context,
+        )
+
         blocked_lines = self._blocked_reason_counts(scanner_report)
 
         position_decisions: list[PositionDecision] = []
@@ -1086,6 +1174,7 @@ class DailyReportBuilder:
                 market_mood=market_mood,
                 market_breadth_mood_result=market_breadth_mood_result,
                 market_memory_context=market_memory_context,
+                sector_intelligence_context=sector_intelligence_context,
                 sector_momentum_result=sector_momentum_result,
                 closed_market_digest=closed_market_digest_payload,
             )
@@ -1149,6 +1238,12 @@ class DailyReportBuilder:
                     title="Sector Momentum",
                     lines=sector_momentum_lines,
                 ),
+                DailyReportSection(
+                    title="Sector Intelligence Summary",
+                    lines=format_sector_intelligence_report_lines(
+                        sector_intelligence_summary
+                    ),
+                ),
                 DailyReportSection(title="Top Candidates", lines=candidate_lines),
                 DailyReportSection(title="Strategy Signals", lines=strategy_lines),
             ]
@@ -1192,6 +1287,9 @@ class DailyReportBuilder:
             confidence_context = confidence_v2_context.get(symbol)
             if confidence_context:
                 signal.update(confidence_context)
+            sector_context = sector_intelligence_context.get(symbol)
+            if sector_context:
+                signal.update(sector_context)
 
         report_metadata_payload = build_report_metadata_payload(
             data_provider=data_provider,
@@ -1204,6 +1302,9 @@ class DailyReportBuilder:
             closed_market_digest=closed_market_digest_payload,
         )
         report_metadata_payload["market_memory_available"] = market_memory_available
+        report_metadata_payload["sector_intelligence_available"] = (
+            sector_intelligence_available
+        )
         report_metadata_payload["confidence_v2_available"] = confidence_v2_available
 
         return DailyReport(
@@ -1230,6 +1331,8 @@ class DailyReportBuilder:
             candidate_talib_technical=candidate_talib_technical,
             market_memory_summary=market_memory_summary,
             market_memory_context=market_memory_context,
+            sector_intelligence_summary=sector_intelligence_summary,
+            sector_intelligence_context=sector_intelligence_context,
             confidence_v2_summary=confidence_v2_summary,
             confidence_v2_context=confidence_v2_context,
             report_metadata=report_metadata_payload,

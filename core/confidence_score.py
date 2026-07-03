@@ -43,6 +43,7 @@ class ConfidenceInput:
     market_mood: str | None = None
     memory_label: str | None = None
     sector_status: str | None = None
+    sector_intelligence_label: str | None = None
     risk_reward: float | None = None
     fundamental_status: str | None = None
     volume_ratio: float | None = None
@@ -121,15 +122,40 @@ def _component_from_memory(label: str | None) -> tuple[int, list[str], list[str]
     return 0, [], []
 
 
-def _component_from_sector(status: str | None) -> tuple[int, list[str], list[str]]:
+def _component_from_sector(
+    status: str | None,
+    intelligence_label: str | None,
+) -> tuple[int, list[str], list[str]]:
     normalized = str(status or "").upper()
+    sector_label = str(intelligence_label or "").upper()
+    score = 0
+    reasons: list[str] = []
+    risks: list[str] = []
     if normalized == "HOT":
-        return 10, ["Sector context is hot"], []
-    if normalized == "WARM":
-        return 5, ["Sector context is supportive"], []
-    if normalized == "WEAK":
-        return -8, [], ["Sector context is weak"]
-    return 0, [], []
+        score += 6
+        reasons.append("Sector context is hot")
+    elif normalized == "WARM":
+        score += 4
+        reasons.append("Sector context is supportive")
+    elif normalized == "WEAK":
+        score -= 6
+        risks.append("Sector context is weak")
+
+    if sector_label in {
+        "LEADER_IN_HOT_SECTOR",
+        "SUPPORTED_BY_SECTOR",
+        "STOCK_OUTPERFORMING_SECTOR",
+    }:
+        score += 4
+        reasons.append("Sector Intelligence supports the symbol")
+    elif sector_label == "STRONG_STOCK_WEAK_SECTOR":
+        score += 2
+        risks.append("Strength is isolated inside a weak sector")
+    elif sector_label in {"WEAK_IN_HOT_SECTOR", "SECTOR_DRAG"}:
+        score -= 4
+        risks.append("Sector Intelligence flags a sector relationship risk")
+
+    return _clamp(score, -10, 10), reasons, risks
 
 
 def _component_from_risk_reward(value: float | None) -> tuple[int, list[str], list[str]]:
@@ -221,7 +247,8 @@ def build_confidence_v2(input_value: ConfidenceInput) -> dict[str, Any]:
         input_value.memory_label
     )
     sector, sector_reasons, sector_risks = _component_from_sector(
-        input_value.sector_status
+        input_value.sector_status,
+        input_value.sector_intelligence_label,
     )
     risk_reward, rr_reasons, rr_risks = _component_from_risk_reward(
         input_value.risk_reward
@@ -316,6 +343,7 @@ def build_confidence_v2_context(
                     market_mood=item.market_mood,
                     memory_label=item.memory_label,
                     sector_status=item.sector_status,
+                    sector_intelligence_label=item.sector_intelligence_label,
                     risk_reward=item.risk_reward,
                     fundamental_status=item.fundamental_status,
                     volume_ratio=item.volume_ratio,

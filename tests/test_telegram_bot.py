@@ -208,6 +208,31 @@ def _sample_payload() -> dict:
             "talib_reason": "",
             "tradingview_technical_available": True,
             "confidence_v2_available": True,
+            "sector_intelligence_available": True,
+        },
+        "sector_intelligence_summary": {
+            "available": True,
+            "sector_supported": ["ELKA"],
+            "sector_leaders": ["LCSW"],
+            "isolated_strength": ["TANM"],
+            "weak_in_hot_sector": ["ABUK"],
+            "sector_drag": [],
+            "unknown": [],
+        },
+        "sector_intelligence_context": {
+            "ELKA": {
+                "symbol": "ELKA",
+                "sector": "Real Estate",
+                "sector_label": "SUPPORTED_BY_SECTOR",
+                "sector_score": 82,
+                "sector_avg_change_pct": 1.3,
+                "symbol_change_pct": 3.0,
+                "relative_to_sector_pct": 1.7,
+                "sector_is_hot": True,
+                "sector_is_weak": False,
+                "sector_reasons": ["Hot sector supports the symbol setup"],
+                "sector_risks": [],
+            }
         },
         "confidence_v2_summary": {
             "available": True,
@@ -354,6 +379,8 @@ def test_daily_overview_formatter() -> None:
     assert "3 good setups" in text
     assert "Market closed" in text
     assert "TA-Lib: ACTIVE" in text
+    assert "🏭 ذكاء القطاعات:" in text
+    assert "مدعوم بالقطاع: ELKA" in text
     assert "🧠 الثقة الذكية:" in text
     assert "قوي: ELKA" in text
 
@@ -403,6 +430,15 @@ def test_symbol_why_includes_confidence_v2() -> None:
     assert "أسباب الثقة" in text
     assert "مخاطر الثقة" in text
     assert "مكونات مختصرة" in text
+
+
+def test_symbol_why_includes_sector_intelligence() -> None:
+    text = format_symbol_why(_sample_payload(), "ELKA")
+
+    assert "القطاع: Real Estate" in text
+    assert "علاقة السهم بالقطاع: SUPPORTED_BY_SECTOR" in text
+    assert "أقوى من متوسط القطاع" in text
+    assert "سبب القطاع" in text
 
 
 def test_daily_overview_shows_talib_fallback() -> None:

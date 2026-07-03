@@ -793,14 +793,18 @@ def test_daily_report_includes_sector_momentum_section(tmp_path: Path) -> None:
     section_titles = [section.title for section in report.sections]
     mood_index = section_titles.index("Market Mood")
     sector_index = section_titles.index("Sector Momentum")
+    sector_intelligence_index = section_titles.index("Sector Intelligence Summary")
     candidates_index = section_titles.index("Top Candidates")
     sector_section = report.sections[sector_index]
 
-    assert mood_index < sector_index < candidates_index
+    assert mood_index < sector_index < sector_intelligence_index < candidates_index
     assert any("Real Estate" in line for line in sector_section.lines)
     assert any("HOT" in line for line in sector_section.lines)
     assert report.sector_momentum
     assert report.sector_momentum[0]["sector"] == "Real Estate"
+    assert report.report_metadata["sector_intelligence_available"] is True
+    assert report.sector_intelligence_summary["available"] is True
+    assert report.sector_intelligence_context["RE0"]["sector"] == "Real Estate"
 
 
 def test_top_candidates_rank_factors_include_sector_status(tmp_path: Path) -> None:
@@ -876,6 +880,7 @@ def test_top_candidates_rank_factors_include_sector_status(tmp_path: Path) -> No
     top_text = "\n".join(top_section.lines)
 
     assert "sector HOT" in top_text
+    assert "Sector:" in top_text
     assert "Rank factors:" in top_text
 
 

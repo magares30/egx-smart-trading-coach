@@ -64,6 +64,29 @@ def test_confidence_v2_closed_market_keeps_analysis_but_adds_risk() -> None:
     assert result["confidence_components_v2"]["session"] < 0
 
 
+def test_confidence_v2_uses_sector_intelligence_label() -> None:
+    supported = build_confidence_v2(
+        ConfidenceInput(
+            symbol="ELKA",
+            base_score=60,
+            sector_status="HOT",
+            sector_intelligence_label="SUPPORTED_BY_SECTOR",
+        )
+    )
+    risky = build_confidence_v2(
+        ConfidenceInput(
+            symbol="WEAK",
+            base_score=60,
+            sector_status="HOT",
+            sector_intelligence_label="WEAK_IN_HOT_SECTOR",
+        )
+    )
+
+    assert supported["confidence_components_v2"]["sector"] > 0
+    assert risky["confidence_components_v2"]["sector"] > 0
+    assert supported["confidence_score_v2"] > risky["confidence_score_v2"]
+
+
 def test_confidence_v2_context_skips_bad_symbol_safely() -> None:
     context, summary, available = build_confidence_v2_context(
         [ConfidenceInput(symbol="ELKA", base_score=80)]

@@ -27,6 +27,10 @@ from core.confidence_score import (
     format_confidence_v2_arabic_block,
     format_symbol_confidence_v2_arabic_lines,
 )
+from core.sector_intelligence import (
+    format_sector_intelligence_arabic_block,
+    format_symbol_sector_intelligence_arabic_lines,
+)
 from core.market_memory import (
     format_market_memory_arabic_block,
     format_symbol_memory_arabic_lines,
@@ -273,11 +277,17 @@ def _strategy_signals(payload: dict[str, Any]) -> list[dict[str, Any]]:
         for symbol, item in (payload.get("confidence_v2_context") or {}).items()
         if isinstance(item, dict)
     }
+    sector_lookup = {
+        str(symbol).upper(): item
+        for symbol, item in (payload.get("sector_intelligence_context") or {}).items()
+        if isinstance(item, dict)
+    }
     for item in parsed:
         symbol = str(item.get("symbol", "")).upper()
         confirmation = confirmation_lookup.get(symbol, {})
         decision = decision_lookup.get(symbol, {})
         confidence = confidence_lookup.get(symbol, {})
+        sector = sector_lookup.get(symbol, {})
         item["confirmation_label"] = confirmation.get("confirmation_label")
         item["confirmation_text"] = confirmation.get("confirmation_text")
         item["decision"] = decision.get("decision") or item.get("decision_label")
@@ -286,6 +296,8 @@ def _strategy_signals(payload: dict[str, Any]) -> list[dict[str, Any]]:
         )
         if confidence:
             item.update(confidence)
+        if sector:
+            item.update(sector)
     return parsed
 
 
@@ -323,6 +335,22 @@ def _confidence_v2_context_for_symbol(
     symbol: str,
 ) -> dict[str, Any] | None:
     context = payload.get("confidence_v2_context") or {}
+    if not isinstance(context, dict):
+        return None
+    value = context.get(symbol.upper())
+    return value if isinstance(value, dict) else None
+
+
+def _sector_intelligence_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    summary = payload.get("sector_intelligence_summary") or {}
+    return summary if isinstance(summary, dict) else {}
+
+
+def _sector_intelligence_context_for_symbol(
+    payload: dict[str, Any],
+    symbol: str,
+) -> dict[str, Any] | None:
+    context = payload.get("sector_intelligence_context") or {}
     if not isinstance(context, dict):
         return None
     value = context.get(symbol.upper())
@@ -379,6 +407,9 @@ def format_daily_overview(payload: dict[str, Any] | None) -> str:
 
     lines: list[str] = []
     lines.extend(format_closed_market_digest_arabic_block(closed_digest))
+    lines.extend(
+        format_sector_intelligence_arabic_block(_sector_intelligence_summary(payload))
+    )
     lines.extend(format_confidence_v2_arabic_block(_confidence_v2_summary(payload)))
     lines.extend(format_market_memory_arabic_block(_market_memory_summary(payload)))
     lines.extend(
@@ -420,6 +451,9 @@ def format_best_opportunities(payload: dict[str, Any] | None, *, limit: int = 5)
         return "مفيش فرص واضحة في آخر تقرير."
 
     lines = ["🔥 أفضل الفرص:", ""]
+    lines.extend(
+        format_sector_intelligence_arabic_block(_sector_intelligence_summary(payload))
+    )
     lines.extend(format_confidence_v2_arabic_block(_confidence_v2_summary(payload)))
     lines.extend(format_market_memory_arabic_block(_market_memory_summary(payload)))
     for index, signal in enumerate(signals, start=1):
@@ -482,6 +516,9 @@ def format_best_three(payload: dict[str, Any] | None) -> str:
         return "مفيش فرص واضحة في آخر تقرير."
 
     lines = ["📌 أفضل 3 بس:", ""]
+    lines.extend(
+        format_sector_intelligence_arabic_block(_sector_intelligence_summary(payload))
+    )
     lines.extend(format_confidence_v2_arabic_block(_confidence_v2_summary(payload)))
     lines.extend(format_market_memory_arabic_block(_market_memory_summary(payload)))
     lines.extend(
@@ -517,6 +554,9 @@ def format_next_session_watch(payload: dict[str, Any] | None, *, limit: int = 5)
     metadata = payload.get("report_metadata") or {}
     closed_digest = metadata.get("closed_market_digest") or {}
     lines = ["👀 راقب الجلسة الجاية:", ""]
+    lines.extend(
+        format_sector_intelligence_arabic_block(_sector_intelligence_summary(payload))
+    )
     lines.extend(format_confidence_v2_arabic_block(_confidence_v2_summary(payload)))
     lines.extend(format_market_memory_arabic_block(_market_memory_summary(payload)))
     if closed_digest.get("enabled") or market_session.get("status") == "CLOSED":
@@ -1047,6 +1087,9 @@ def format_symbol_why(payload: dict[str, Any] | None, symbol: str) -> str:
     )
     lines.extend(format_symbol_confidence_v2_arabic_lines(
         _confidence_v2_context_for_symbol(payload, normalized)
+    ))
+    lines.extend(format_symbol_sector_intelligence_arabic_lines(
+        _sector_intelligence_context_for_symbol(payload, normalized)
     ))
     lines.extend(format_symbol_memory_arabic_lines(
         _market_memory_context_for_symbol(payload, normalized)
