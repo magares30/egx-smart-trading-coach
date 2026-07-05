@@ -463,8 +463,12 @@ def _notes_text(summary: dict[str, Any]) -> str:
 
 def format_portfolio_learning_arabic_block(
     summary: dict[str, Any] | None,
+    *,
+    require_available: bool = True,
 ) -> list[str]:
-    if not summary or not summary.get("available"):
+    if not summary:
+        return []
+    if require_available and not summary.get("available"):
         return []
     win_rate = summary.get("win_rate_pct")
     win_rate_text = f"{float(win_rate):.1f}%" if win_rate is not None else "n/a"
@@ -482,6 +486,30 @@ def format_portfolio_learning_arabic_block(
         f"ملاحظة: {note}",
         "",
     ]
+
+
+def format_portfolio_learning_daily_overview_lines(
+    payload: dict[str, Any] | None,
+) -> list[str]:
+    """Render Portfolio Learning for the daily Telegram overview."""
+    if payload is None:
+        return []
+
+    summary = payload.get("portfolio_learning_summary")
+    if isinstance(summary, dict):
+        return format_portfolio_learning_arabic_block(
+            summary,
+            require_available=False,
+        )
+
+    metadata = payload.get("report_metadata") or {}
+    if metadata.get("portfolio_learning_available"):
+        return [
+            "📚 تعلم المحفظة:",
+            "محتاج تاريخ أكتر من الصفقات الورقية.",
+            "",
+        ]
+    return []
 
 
 def format_symbol_portfolio_learning_arabic_line(

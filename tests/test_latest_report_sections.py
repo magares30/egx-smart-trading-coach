@@ -8,6 +8,7 @@ from core.latest_report_sections import (
     extract_report_metadata,
     format_report_metadata_block,
     parse_pnl_lines_from_sections,
+    resolve_daily_overview_paper_pnl,
     resolve_portfolio_data_status,
 )
 
@@ -142,3 +143,43 @@ def test_format_report_metadata_block_is_safe_and_informative() -> None:
     assert "TradingView technical: ACTIVE" in text
     assert "1234567890:AA" not in text
     assert CLOUD_PORTFOLIO_STATE_MESSAGE not in text
+
+
+def test_resolve_daily_overview_paper_pnl_prefers_executive_when_valid() -> None:
+    payload = {
+        "executive_summary": {"paper_pnl": "+1,500.00 (+1.50%) | Open positions: 0"},
+        "paper_portfolio": {"available": True, "unrealized_pnl": 0.0},
+    }
+    assert resolve_daily_overview_paper_pnl(payload) == (
+        "+1,500.00 (+1.50%) | Open positions: 0"
+    )
+
+
+def test_resolve_daily_overview_paper_pnl_empty_portfolio() -> None:
+    payload = {
+        "executive_summary": {"paper_pnl": "n/a"},
+        "paper_portfolio": {
+            "available": True,
+            "open_positions_count": 0,
+            "cash": 100000.0,
+            "total_equity": 100000.0,
+        },
+        "paper_trading_performance": {
+            "available": True,
+            "total_pnl": 0.0,
+            "total_return_pct": 0.0,
+            "open_positions_count": 0,
+        },
+    }
+    assert resolve_daily_overview_paper_pnl(payload) == (
+        "0.00 (+0.00%) | Open positions: 0"
+    )
+
+
+def test_resolve_daily_overview_paper_pnl_missing_portfolio() -> None:
+    payload = {
+        "executive_summary": {"paper_pnl": "n/a"},
+        "paper_portfolio": {"available": False},
+        "paper_trading_performance": {"available": False},
+    }
+    assert resolve_daily_overview_paper_pnl(payload) == "n/a"

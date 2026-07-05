@@ -414,6 +414,81 @@ def test_daily_overview_formatter() -> None:
     assert "مدعوم بالقطاع: ELKA" in text
     assert "🧠 الثقة الذكية:" in text
     assert "قوي: ELKA" in text
+    assert text.index("📚 تعلم المحفظة:") < text.index("🏭 ذكاء القطاعات:")
+
+
+def test_daily_overview_shows_portfolio_learning_with_zero_closed_trades() -> None:
+    payload = _sample_payload()
+    payload["portfolio_learning_summary"] = {
+        "available": False,
+        "open_positions_count": 0,
+        "closed_trades_count": 0,
+        "win_rate_pct": None,
+        "best_pattern": None,
+        "weak_pattern": None,
+        "learning_notes": [],
+        "learning_warnings": [],
+    }
+
+    text = format_daily_overview(payload)
+
+    assert "📚 تعلم المحفظة:" in text
+    assert "صفقات مغلقة: 0" in text
+    assert "نسبة نجاح: n/a" in text
+    assert "أفضل نمط: n/a" in text
+    assert "ملاحظة: محتاج تاريخ أكتر" in text
+
+
+def test_daily_overview_portfolio_learning_metadata_fallback() -> None:
+    payload = _sample_payload()
+    payload.pop("portfolio_learning_summary", None)
+    payload["report_metadata"] = {
+        **(payload.get("report_metadata") or {}),
+        "portfolio_learning_available": True,
+    }
+
+    text = format_daily_overview(payload)
+
+    assert "📚 تعلم المحفظة:" in text
+    assert "محتاج تاريخ أكتر من الصفقات الورقية." in text
+
+
+def test_daily_overview_paper_pnl_empty_portfolio_not_na() -> None:
+    payload = _sample_payload()
+    payload["executive_summary"]["paper_pnl"] = "n/a"
+    payload["paper_portfolio"] = {
+        "available": True,
+        "cash": 100000.0,
+        "open_positions_count": 0,
+        "market_value": 0.0,
+        "total_equity": 100000.0,
+        "unrealized_pnl": 0.0,
+        "unrealized_pnl_pct": 0.0,
+        "positions": [],
+    }
+    payload["paper_trading_performance"] = {
+        "available": True,
+        "initial_capital": 100000,
+        "current_equity": 100000,
+        "total_pnl": 0.0,
+        "total_return_pct": 0.0,
+        "open_positions_count": 0,
+    }
+
+    text = format_daily_overview(payload)
+
+    assert "💰 P&L ورقي: 0.00 (+0.00%) | Open positions: 0" in text
+
+
+def test_daily_overview_paper_pnl_stays_na_when_portfolio_missing() -> None:
+    payload = _cloud_payload_without_portfolio()
+    payload["executive_summary"]["market"] = "CLOSED | BULLISH | Paper entries disabled"
+    payload["executive_summary"]["best_ideas"] = []
+
+    text = format_daily_overview(payload)
+
+    assert "💰 P&L ورقي: n/a" in text
+    assert "📚 تعلم المحفظة:" not in text
 
 
 def test_daily_overview_includes_market_memory_block() -> None:

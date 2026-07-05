@@ -150,3 +150,12 @@ def test_portfolio_learning_formatters() -> None:
     assert "📚 تعلم المحفظة:" in arabic_lines
     assert any("نسبة نجاح: 60.0%" in line for line in arabic_lines)
     assert symbol_line == "تعلم المحفظة: STRONG setups have performed well so far"
+
+
+def test_portfolio_learning_arabic_block_can_skip_available_gate() -> None:
+    summary = empty_portfolio_learning_summary()
+    assert format_portfolio_learning_arabic_block(summary) == []
+    lines = format_portfolio_learning_arabic_block(summary, require_available=False)
+    assert "📚 تعلم المحفظة:" in lines
+    assert "صفقات مغلقة: 0" in lines
+    assert "ملاحظة: محتاج تاريخ أكتر" in lines

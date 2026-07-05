@@ -6,6 +6,7 @@ import re
 from datetime import datetime
 from typing import Any
 
+from core.executive_summary import PAPER_PNL_UNAVAILABLE, _build_paper_pnl_line
 from core.market_data_providers import format_data_provider_label
 from core.talib_technical import format_talib_runtime_telegram_line
 
@@ -228,6 +229,31 @@ def resolve_portfolio_data_status(payload: dict[str, Any] | None) -> dict[str, A
         "section_pnl_lines": parse_pnl_lines_from_sections(payload),
         "portfolio_message": portfolio.get("message"),
     }
+
+
+def resolve_daily_overview_paper_pnl(payload: dict[str, Any] | None) -> str:
+    """Resolve paper P&L text for Telegram daily overview."""
+    if payload is None:
+        return PAPER_PNL_UNAVAILABLE
+
+    executive = payload.get("executive_summary") or {}
+    executive_pnl = executive.get("paper_pnl")
+    if executive_pnl not in (None, "", PAPER_PNL_UNAVAILABLE, "N/A", "غير متاح"):
+        return str(executive_pnl)
+
+    performance = payload.get("paper_trading_performance") or {}
+    portfolio = payload.get("paper_portfolio") or {}
+    resolved = _build_paper_pnl_line(performance, portfolio)
+    if resolved != PAPER_PNL_UNAVAILABLE:
+        if resolved.startswith("0.00 |") and "(+" not in resolved:
+            suffix = resolved.split("| Open positions:", 1)
+            if len(suffix) == 2:
+                return f"0.00 (+0.00%) | Open positions: {suffix[1].strip()}"
+        return resolved
+
+    if executive_pnl in (None, "", PAPER_PNL_UNAVAILABLE, "N/A"):
+        return PAPER_PNL_UNAVAILABLE
+    return str(executive_pnl)
 
 
 def decision_summary_sell_positions(payload: dict[str, Any]) -> list[dict[str, Any]]:

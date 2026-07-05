@@ -16,6 +16,7 @@ from core.latest_report_sections import (
     CLOUD_PORTFOLIO_STATE_MESSAGE,
     decision_summary_sell_positions,
     format_report_metadata_block,
+    resolve_daily_overview_paper_pnl,
     resolve_portfolio_data_status,
 )
 from core.market_hours_auto_refresh import is_auto_refresh_enabled
@@ -33,6 +34,7 @@ from core.sector_intelligence import (
 )
 from core.portfolio_learning import (
     format_portfolio_learning_arabic_block,
+    format_portfolio_learning_daily_overview_lines,
     format_symbol_portfolio_learning_arabic_line,
 )
 from core.market_memory import (
@@ -420,9 +422,7 @@ def format_daily_overview(payload: dict[str, Any] | None) -> str:
 
     lines: list[str] = []
     lines.extend(format_closed_market_digest_arabic_block(closed_digest))
-    lines.extend(
-        format_portfolio_learning_arabic_block(_portfolio_learning_summary(payload))
-    )
+    lines.extend(format_portfolio_learning_daily_overview_lines(payload))
     lines.extend(
         format_sector_intelligence_arabic_block(_sector_intelligence_summary(payload))
     )
@@ -435,7 +435,7 @@ def format_daily_overview(payload: dict[str, Any] | None) -> str:
             f"⚡ الإجراء: {executive.get('action', 'غير متاح')}",
             f"🔥 أفضل أفكار: {best_text}",
             f"✅ التأكيد: {executive.get('confirmation', 'غير متاح')}",
-            f"💰 P&L ورقي: {executive.get('paper_pnl', 'غير متاح')}",
+            f"💰 P&L ورقي: {resolve_daily_overview_paper_pnl(payload)}",
             f"⚠️ المخاطر: {executive.get('main_risk', 'غير متاح')}",
             format_talib_runtime_telegram_line(metadata),
         ]
