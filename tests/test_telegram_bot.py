@@ -652,7 +652,7 @@ def test_collect_why_symbols_max_ten_unique_and_priority() -> None:
     assert symbols[0] == "S01"
     assert symbols[9] == "S10"
     assert symbols.count("S01") == 1
-    assert "ELKA" not in symbols
+    # Structured V2 context symbols may appear after parsed sections within limit.
     assert "COMI" not in symbols
 
 
@@ -690,7 +690,7 @@ def test_why_symbol_text_fallback_still_parses() -> None:
 def test_format_best_three_returns_max_three() -> None:
     text = format_best_three(_sample_payload())
 
-    assert "📌 أفضل 3 بس" in text
+    assert "📌 أفضل 3" in text
     assert "\n1." in text
     assert "\n3." in text
     assert "\n4." not in text
@@ -747,7 +747,7 @@ def test_format_ultra_short_max_lines_and_executive_fields() -> None:
     assert "CLOSED | BULLISH" in text
     assert "ELKA" in text
     assert "ABUK" in text
-    assert "ورقي واسترشادي فقط." in text
+    assert text.strip().endswith("ورقي واسترشادي فقط.")
 
 
 def _cloud_payload_without_portfolio() -> dict:

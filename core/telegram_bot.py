@@ -40,6 +40,18 @@ from core.market_memory import (
     format_symbol_memory_arabic_lines,
 )
 from core.talib_technical import format_talib_runtime_telegram_line
+from core.telegram_report_resolver import (
+    EMPTY_OPPORTUNITIES_MESSAGE,
+    format_confidence_v2_compact_line,
+    format_opportunity_item_block,
+    format_opportunity_item_short,
+    format_sector_intelligence_compact_line,
+    format_sector_intelligence_snippet,
+    is_market_closed,
+    resolve_next_session_items,
+    resolve_opportunity_items,
+    resolve_report_symbols,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -385,30 +397,8 @@ def collect_why_symbols(
     *,
     limit: int = 10,
 ) -> list[str]:
-    """Collect unique symbols for WHY buttons: strategy, then candidates, then watch."""
-    if payload is None:
-        return []
-
-    ordered: list[str] = []
-    seen: set[str] = set()
-
-    def add_symbol(symbol_value: object) -> None:
-        if len(ordered) >= limit:
-            return
-        symbol = str(symbol_value).strip().upper()
-        if not symbol or symbol in seen:
-            return
-        seen.add(symbol)
-        ordered.append(symbol)
-
-    for item in _strategy_signals(payload):
-        add_symbol(item.get("symbol"))
-    for item in _top_candidates(payload):
-        add_symbol(item.get("symbol"))
-    for item in _watch_list(payload):
-        add_symbol(item.get("symbol"))
-
-    return ordered
+    """Collect unique symbols for WHY buttons from structured JSON V2 and legacy sections."""
+    return resolve_report_symbols(payload, include_context=True, limit=limit)
 
 
 def _detail_line(details: list[str], prefix: str) -> str | None:
@@ -472,18 +462,21 @@ def format_best_opportunities(payload: dict[str, Any] | None, *, limit: int = 5)
     if payload is None:
         return NO_REPORT_MESSAGE
 
-    signals = _strategy_signals(payload)[:limit]
-    if not signals:
-        return "مفيش فرص واضحة في آخر تقرير."
+    items = resolve_opportunity_items(payload, limit=limit, mode="opportunities")
+    if not items:
+        return EMPTY_OPPORTUNITIES_MESSAGE
 
-    lines = ["🔥 أفضل الفرص:", ""]
-    lines.extend(
-        format_sector_intelligence_arabic_block(_sector_intelligence_summary(payload))
-    )
-    lines.extend(format_confidence_v2_arabic_block(_confidence_v2_summary(payload)))
-    lines.extend(format_market_memory_arabic_block(_market_memory_summary(payload)))
-    for index, signal in enumerate(signals, start=1):
-        lines.extend(_format_signal_block(signal, index=index))
+    closed = is_market_closed(payload)
+    lines = [
+        "🔥 أفضل أفكار للجلسة الجاية:" if closed else "🔥 أفضل فرص:",
+        "",
+    ]
+    if closed:
+        lines.append("السوق مقفول، مفيش دخول ورقي جديد قبل أول جلسة تداول.")
+        lines.append("")
+
+    for index, item in enumerate(items, start=1):
+        lines.extend(format_opportunity_item_block(item, index=index))
         lines.append("")
 
     lines.append("دي متابعة مش تنفيذ حقيقي.")
@@ -537,19 +530,22 @@ def format_best_three(payload: dict[str, Any] | None) -> str:
     if payload is None:
         return NO_REPORT_MESSAGE
 
-    signals = _strategy_signals(payload)[:3]
-    if not signals:
-        return "مفيش فرص واضحة في آخر تقرير."
+    items = resolve_opportunity_items(payload, limit=3, mode="opportunities")
+    if not items:
+        return EMPTY_OPPORTUNITIES_MESSAGE
 
-    lines = ["📌 أفضل 3 بس:", ""]
+    closed = is_market_closed(payload)
+    lines = [
+        "📌 أفضل 3 للجلسة الجاية:" if closed else "📌 أفضل 3 فرص:",
+        "",
+    ]
+    if closed:
+        lines.append("السوق مقفول، دي متابعة فقط وليست دخول فوري.")
+        lines.append("")
+
     lines.extend(
-        format_sector_intelligence_arabic_block(_sector_intelligence_summary(payload))
-    )
-    lines.extend(format_confidence_v2_arabic_block(_confidence_v2_summary(payload)))
-    lines.extend(format_market_memory_arabic_block(_market_memory_summary(payload)))
-    lines.extend(
-        _format_signal_short(signal, index=index)
-        for index, signal in enumerate(signals, start=1)
+        format_opportunity_item_short(item, index=index)
+        for index, item in enumerate(items, start=1)
     )
     lines.extend(["", "دي متابعة مش تنفيذ حقيقي."])
     return "\n".join(lines)
@@ -559,42 +555,17 @@ def format_next_session_watch(payload: dict[str, Any] | None, *, limit: int = 5)
     if payload is None:
         return NO_REPORT_MESSAGE
 
-    decision_summary = payload.get("decision_summary") or {}
-    watch_symbols = [
-        str(symbol).upper()
-        for symbol in decision_summary.get("watch_next_session", [])
-    ]
-    signals = [
-        signal
-        for signal in _strategy_signals(payload)
-        if str(signal.get("symbol", "")).upper() in watch_symbols
-    ][:limit]
+    items = resolve_next_session_items(payload, limit=limit)
+    if not items:
+        return EMPTY_OPPORTUNITIES_MESSAGE
 
-    if not signals and watch_symbols:
-        signals = [{"symbol": symbol, "decision": "WATCH_NEXT_SESSION"} for symbol in watch_symbols[:limit]]
-
-    if not signals:
-        return "مفيش أسهم للمتابعة في الجلسة الجاية حالياً."
-
-    market_session = payload.get("market_session") or {}
-    metadata = payload.get("report_metadata") or {}
-    closed_digest = metadata.get("closed_market_digest") or {}
     lines = ["👀 راقب الجلسة الجاية:", ""]
-    lines.extend(
-        format_sector_intelligence_arabic_block(_sector_intelligence_summary(payload))
-    )
-    lines.extend(format_confidence_v2_arabic_block(_confidence_v2_summary(payload)))
-    lines.extend(format_market_memory_arabic_block(_market_memory_summary(payload)))
-    if closed_digest.get("enabled") or market_session.get("status") == "CLOSED":
+    if is_market_closed(payload):
         lines.append("السوق مقفول دلوقتي — الإشارات دي للمتابعة مش للتنفيذ الفوري.")
         lines.append("")
 
-    for index, signal in enumerate(signals, start=1):
-        symbol = signal.get("symbol", "?")
-        decision = signal.get("decision", "WATCH_NEXT_SESSION")
-        confirmation = signal.get("confirmation_text") or "غير متاح"
-        lines.append(f"{index}. {symbol} | {decision}")
-        lines.append(f"   {confirmation}")
+    for index, item in enumerate(items, start=1):
+        lines.extend(format_opportunity_item_block(item, index=index))
         lines.append("")
 
     return "\n".join(lines).rstrip()
@@ -824,6 +795,59 @@ def format_paper_portfolio(payload: dict[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def format_opportunities_menu_intro(payload: dict[str, Any] | None) -> str:
+    """Intro text for the opportunities submenu with structured preview."""
+    if payload is None:
+        return f"🔥 قائمة الفرص:\n\n{NO_REPORT_MESSAGE}"
+
+    lines = ["🔥 قائمة الفرص:", ""]
+    if is_market_closed(payload):
+        lines.append("السوق مقفول، المعروض هنا أفكار متابعة للجلسة الجاية فقط.")
+        lines.append("")
+
+    executive = payload.get("executive_summary") or {}
+    best_ideas = executive.get("best_ideas") or []
+    if best_ideas:
+        preview = ", ".join(str(symbol) for symbol in best_ideas[:5])
+        lines.append(f"أفضل أفكار: {preview}")
+
+    lines.extend(["", "اختار من القائمة:"])
+    return "\n".join(lines)
+
+
+def format_market_menu_intro(payload: dict[str, Any] | None) -> str:
+    """Intro text for the market submenu with short session preview."""
+    if payload is None:
+        return f"📈 قائمة السوق:\n\n{NO_REPORT_MESSAGE}"
+
+    executive = payload.get("executive_summary") or {}
+    session = payload.get("market_session") or {}
+    metadata = payload.get("report_metadata") or {}
+    session_status = session.get("status") or metadata.get("market_status") or "غير متاح"
+
+    lines = ["📈 قائمة السوق:", "", f"جلسة السوق: {session_status}"]
+
+    mood_lines = _section_lines(payload, "Market Mood")
+    if mood_lines:
+        mood_text = mood_lines[0].lstrip("- ").strip()
+        lines.append(f"مزاج السوق: {mood_text}")
+
+    hot_sectors = [
+        sector
+        for sector in (payload.get("sector_momentum") or [])
+        if isinstance(sector, dict) and sector.get("status") == "HOT"
+    ]
+    if hot_sectors:
+        top = hot_sectors[0]
+        lines.append(
+            f"أقوى قطاع: {top.get('sector', 'غير معروف')} "
+            f"(Score {top.get('sector_score', '?')})"
+        )
+
+    lines.extend(["", "اختار من القائمة:"])
+    return "\n".join(lines)
+
+
 def format_sell_portfolio_menu_intro(payload: dict[str, Any] | None) -> str:
     """Intro text for the sell/portfolio submenu with honest Cloud Run context."""
     if payload is None:
@@ -848,9 +872,14 @@ def format_sell_portfolio_menu_intro(payload: dict[str, Any] | None) -> str:
         lines.append("💼 المحفظة: غير متاحة في التقرير الحالي")
 
     if sell_alerts:
-        lines.append(f"🚨 تنبيهات بيع من التقرير: {', '.join(sell_alerts)}")
+        lines.append(
+            f"🚨 تنبيهات بيع من التقرير ({len(sell_alerts)}): {', '.join(sell_alerts)}"
+        )
     else:
         lines.append("🚨 مراجعة البيع: من إشارات التقرير ومحفظة السيرفر إن وُجدت")
+
+    if is_market_closed(payload):
+        lines.append("السوق مقفول — مراجعة البيع للجلسة الجاية.")
 
     lines.extend(["", "اختار من القائمة:"])
     return "\n".join(lines)
@@ -885,6 +914,19 @@ def format_hot_sectors(payload: dict[str, Any] | None, *, limit: int = 5) -> str
             f"{index}. {name} | {status} | Score {score}{change_text} | "
             f"Candidates {candidates_count}"
         )
+
+    sector_summary = _sector_intelligence_summary(payload)
+    snippet = format_sector_intelligence_snippet(sector_summary)
+    if snippet:
+        lines.extend(["", *snippet])
+        isolated = sector_summary.get("isolated_strength") or []
+        weak_hot = sector_summary.get("weak_in_hot_sector") or []
+        if isolated or weak_hot:
+            isolated_text = ", ".join(str(value) for value in isolated) or "لا يوجد"
+            weak_text = ", ".join(str(value) for value in weak_hot) or "لا يوجد"
+            lines.append(f"قوة منفردة: {isolated_text}")
+            lines.append(f"ضعيف داخل قطاع قوي: {weak_text}")
+
     return "\n".join(lines)
 
 
@@ -895,24 +937,43 @@ def format_ultra_short(payload: dict[str, Any] | None, *, max_lines: int = 8) ->
     executive = payload.get("executive_summary") or {}
     decision_summary = payload.get("decision_summary") or {}
     best_ideas = executive.get("best_ideas") or []
+    watch_symbols = decision_summary.get("watch_next_session") or []
     sell_alerts = decision_summary.get("sell_alerts") or []
+
+    watch_preview = ", ".join(str(symbol) for symbol in watch_symbols[:5])
+    best_preview = ", ".join(str(symbol) for symbol in best_ideas[:5])
 
     lines = [
         "🧾 نسخة مختصرة:",
         f"السوق: {executive.get('market', 'غير متاح')}",
         f"الإجراء: {executive.get('action', 'غير متاح')}",
-        f"أفضل أفكار: {', '.join(str(symbol) for symbol in best_ideas) or 'لا يوجد'}",
     ]
+    if is_market_closed(payload):
+        lines.append("السوق مقفول — متابعة للجلسة الجاية فقط.")
+    lines.append(f"أفضل أفكار: {best_preview or 'لا يوجد'}")
+    if watch_preview:
+        lines.append(f"متابعة الجلسة الجاية: {watch_preview}")
     if sell_alerts:
         lines.append(f"تنبيهات بيع: {', '.join(str(symbol) for symbol in sell_alerts)}")
+    confidence_line = format_confidence_v2_compact_line(_confidence_v2_summary(payload))
+    if confidence_line:
+        lines.append(confidence_line)
+    sector_line = format_sector_intelligence_compact_line(
+        _sector_intelligence_summary(payload)
+    )
+    if sector_line:
+        lines.append(sector_line)
     lines.extend(
         [
             f"P&L ورقي: {executive.get('paper_pnl', 'غير متاح')}",
-            f"المخاطر: {executive.get('main_risk', 'غير متاح')}",
-            "ورقي واسترشادي فقط.",
         ]
     )
-    return "\n".join(lines[:max_lines])
+    advisory = "ورقي واسترشادي فقط."
+    if max_lines <= 1:
+        return advisory
+    content = lines[: max(max_lines - 1, 1)]
+    content.append(advisory)
+    return "\n".join(content)
 
 
 def format_market_status(payload: dict[str, Any] | None) -> str:
@@ -976,6 +1037,12 @@ def format_market_status(payload: dict[str, Any] | None) -> str:
             )
             lines.append(f"{index}. {name} | Score {score}{change_text}")
 
+    sector_snippet = format_sector_intelligence_snippet(
+        _sector_intelligence_summary(payload)
+    )
+    if sector_snippet:
+        lines.extend(["", *sector_snippet])
+
     return "\n".join(lines)
 
 
@@ -1009,6 +1076,16 @@ def format_help() -> str:
         f"{BTN_WHY} — اختار سهم من أزرار أو اكتب WHY ELKA",
         f"{BTN_WARNINGS} — أهم التحذيرات",
         f"{BTN_BACK} — رجوع للقائمة الرئيسية",
+        "",
+        "طبقات التقرير المتكاملة:",
+        "- Closed Market Digest — صدق أثناء إغلاق EGX",
+        "- الثقة الذكية / Confidence V2",
+        "- ذكاء القطاعات / Sector Intelligence",
+        "- ذاكرة السوق / Market Memory",
+        "- تعلم المحفظة / Portfolio Learning",
+        "",
+        "لما السوق مقفول، أزرار الفرص بتعرض أفكار متابعة للجلسة الجاية "
+        "مش دخول شراء فوري.",
         "",
         "☁️ السيرفر: 🔄 يحدّث التقرير من Cloud Run (TradingView). TA-Lib اختياري.",
         "☁️ محفظة السيرفر: لو لسه مش متفعّلة، شغّل bootstrap على Cloud Run.",
@@ -1108,7 +1185,31 @@ def format_symbol_why(payload: dict[str, Any] | None, symbol: str) -> str:
     )
 
     if strategy is None and candidate is None and watch_item is None:
-        return WHY_NOT_FOUND_MESSAGE
+        structured_hit = any(
+            (
+                _confidence_v2_context_for_symbol(payload, normalized),
+                _sector_intelligence_context_for_symbol(payload, normalized),
+                _market_memory_context_for_symbol(payload, normalized),
+                _portfolio_learning_context_for_symbol(payload, normalized),
+            )
+        )
+        if not structured_hit:
+            decision_summary = payload.get("decision_summary") or {}
+            executive = payload.get("executive_summary") or {}
+            in_decisions = any(
+                str(item.get("symbol", "")).upper() == normalized
+                for item in (decision_summary.get("signals") or [])
+                if isinstance(item, dict)
+            )
+            in_watch = normalized in {
+                str(symbol).upper()
+                for symbol in (decision_summary.get("watch_next_session") or [])
+            }
+            in_best = normalized in {
+                str(symbol).upper() for symbol in (executive.get("best_ideas") or [])
+            }
+            if not (in_decisions or in_watch or in_best):
+                return WHY_NOT_FOUND_MESSAGE
 
     lines = [f"🧠 ليه {normalized}؟", ""]
     lines.append(
@@ -1379,7 +1480,7 @@ def run_telegram_bot() -> int:
             asyncio.create_task(_run_cloud_report())
         elif text == BTN_OPPORTUNITIES:
             await update.message.reply_text(
-                "🔥 قائمة الفرص:",
+                format_opportunities_menu_intro(payload),
                 reply_markup=build_opportunities_menu(),
             )
         elif text == BTN_SELL_PORTFOLIO:
@@ -1389,7 +1490,7 @@ def run_telegram_bot() -> int:
             )
         elif text == BTN_MARKET_MENU:
             await update.message.reply_text(
-                "📈 قائمة السوق:",
+                format_market_menu_intro(payload),
                 reply_markup=build_market_menu(),
             )
         elif text == BTN_BACK:
