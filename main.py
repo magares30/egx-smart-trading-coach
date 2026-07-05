@@ -1816,6 +1816,16 @@ def print_and_save_daily_report(
     )
     print(format_daily_report_text(report))
     txt_path, json_path = save_daily_report(report, settings.REPORTS_DIR)
+    from core.paper_entry_execution import (
+        execute_paper_entries_after_report,
+        patch_saved_report_with_entry_metadata,
+    )
+
+    entry_execution = execute_paper_entries_after_report(
+        _filtered_strategy_report(pipeline),
+        ignore_market_hours=ignore_market_hours,
+    )
+    patch_saved_report_with_entry_metadata(json_path, entry_execution)
     try:
         txt_display = txt_path.relative_to(settings.PROJECT_ROOT)
         json_display = json_path.relative_to(settings.PROJECT_ROOT)
