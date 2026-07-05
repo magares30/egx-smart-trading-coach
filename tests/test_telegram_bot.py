@@ -12,6 +12,7 @@ from core.telegram_bot import (
     BTN_OPPORTUNITIES,
     BTN_PNL,
     BTN_SELL_ONLY,
+    BTN_TRADE_LOG,
     BTN_ULTRA_SHORT,
     NO_REPORT_MESSAGE,
     SELL_REVIEW_EMPTY_MESSAGE,
@@ -695,6 +696,7 @@ def test_submenus_include_new_section_buttons() -> None:
     assert BTN_BEST_THREE in opp_labels
     assert BTN_SELL_ONLY in sell_labels
     assert BTN_PNL in sell_labels
+    assert BTN_TRADE_LOG in sell_labels
     assert BTN_HOT_SECTORS in {
         button.text
         for row in build_market_menu().keyboard

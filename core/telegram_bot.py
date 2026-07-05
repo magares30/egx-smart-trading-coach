@@ -42,6 +42,7 @@ from core.market_memory import (
     format_symbol_memory_arabic_lines,
 )
 from core.talib_technical import format_talib_runtime_telegram_line
+from core.trade_transactions import format_trade_transactions
 from core.telegram_report_resolver import (
     EMPTY_OPPORTUNITIES_MESSAGE,
     format_confidence_v2_compact_line,
@@ -91,6 +92,7 @@ BTN_SELL = "🚨 مراجعة بيع"
 BTN_SELL_ONLY = "🚨 البيع فقط"
 BTN_PORTFOLIO = "💼 محفظتي الورقية"
 BTN_PNL = "💰 الأرباح والخسائر"
+BTN_TRADE_LOG = "📜 سجل العمليات"
 BTN_MARKET = "📈 حالة السوق"
 BTN_HOT_SECTORS = "🔥 القطاعات السخنة"
 BTN_ULTRA_SHORT = "🧾 نسخة مختصرة"
@@ -113,6 +115,7 @@ SELL_PORTFOLIO_MENU_BUTTONS = (
     BTN_SELL_ONLY,
     BTN_PORTFOLIO,
     BTN_PNL,
+    BTN_TRADE_LOG,
     BTN_BACK,
 )
 MARKET_MENU_BUTTONS = (BTN_MARKET, BTN_HOT_SECTORS, BTN_ULTRA_SHORT, BTN_BACK)
@@ -205,6 +208,7 @@ def build_sell_portfolio_menu():
         [
             [KeyboardButton(BTN_SELL), KeyboardButton(BTN_SELL_ONLY)],
             [KeyboardButton(BTN_PORTFOLIO), KeyboardButton(BTN_PNL)],
+            [KeyboardButton(BTN_TRADE_LOG)],
             [KeyboardButton(BTN_BACK)],
         ],
         resize_keyboard=True,
@@ -1071,7 +1075,7 @@ def format_help() -> str:
         f"{BTN_DAILY} — ملخص سريع لآخر تقرير",
         f"{BTN_REFRESH_REPORT} — يشغّل تقرير EGX من السيرفر",
         f"{BTN_OPPORTUNITIES} — {BTN_BEST_THREE} / {BTN_BEST} / {BTN_NEXT_SESSION}",
-        f"{BTN_SELL_PORTFOLIO} — {BTN_SELL} / {BTN_SELL_ONLY} / {BTN_PORTFOLIO} / {BTN_PNL}",
+        f"{BTN_SELL_PORTFOLIO} — {BTN_SELL} / {BTN_SELL_ONLY} / {BTN_PORTFOLIO} / {BTN_PNL} / {BTN_TRADE_LOG}",
         f"{BTN_MARKET_MENU} — {BTN_MARKET} / {BTN_HOT_SECTORS} / {BTN_ULTRA_SHORT}",
         f"{BTN_WHY} — اختار سهم من أزرار أو اكتب WHY ELKA",
         f"{BTN_WARNINGS} — أهم التحذيرات",
@@ -1509,6 +1513,8 @@ def run_telegram_bot() -> int:
             await _reply(update, format_paper_portfolio(payload))
         elif text == BTN_PNL:
             await _reply(update, format_pnl_summary(payload))
+        elif text == BTN_TRADE_LOG:
+            await _reply(update, format_trade_transactions(payload))
         elif text == BTN_MARKET:
             await _reply(update, format_market_status(payload))
         elif text == BTN_HOT_SECTORS:
