@@ -8,18 +8,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from config import settings
 from core.cloud_state_store import hydrate_local_storage_from_cloud, sync_local_storage_to_cloud
 from core.live_paper_trader import LivePaperTradeDecision, LivePaperTrader
 from core.market_hours import EgxMarketSession, detect_egx_market_session
-from core.portfolio import VirtualPortfolio
+from core.models import SignalType, Trade, TradeSide, TradeSignal
+from core.portfolio import PortfolioError, VirtualPortfolio
 from core.risk import RiskManager
-from core.strategy import StrategyReport
+from core.sector_intelligence import RISKY_SECTOR_LABELS
+from core.strategy import StrategyReport, StrategyResult
+from core.telegram_report_resolver import resolve_opportunity_items
 from core.trade_journal import TradeJournal
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_TRADES_PER_RUN = 3
 DEFAULT_MIN_CONFIDENCE_SCORE = 75
+SOURCE_BUY_SETUP = "BUY_SETUP"
+SOURCE_BEST_IDEAS_FALLBACK = "BEST_IDEAS_FALLBACK"
+SOURCE_NONE = "NONE"
+FALLBACK_TRADE_NOTE = "paper_entry_source=BEST_IDEAS_FALLBACK"
 
 
 @dataclass(frozen=True)
@@ -32,6 +40,9 @@ class PaperEntryExecutionResult:
     skipped_count: int
     rejected_count: int
     skip_reason: str | None = None
+    execution_source: str = SOURCE_NONE
+    fallback_used: bool = False
+    fallback_candidates_count: int = 0
 
     def to_metadata(self) -> dict[str, Any]:
         return {
@@ -43,6 +54,11 @@ class PaperEntryExecutionResult:
             "paper_entry_execution_skipped_count": self.skipped_count,
             "paper_entry_execution_rejected_count": self.rejected_count,
             "paper_entry_execution_skip_reason": self.skip_reason,
+            "paper_entry_execution_source": self.execution_source,
+            "paper_entry_execution_fallback_used": self.fallback_used,
+            "paper_entry_execution_fallback_candidates_count": (
+                self.fallback_candidates_count
+            ),
         }
 
 
@@ -51,9 +67,11 @@ def _normalize_skip_log_reason(reason: str) -> str:
     if "market closed" in lowered:
         return "market closed"
     if "already open" in lowered:
-        return "existing position"
-    if "insufficient cash" in lowered:
+        return "already open"
+    if "insufficient cash" in lowered or "no cash" in lowered:
         return "no cash"
+    if "maximum open positions" in lowered or "max positions" in lowered:
+        return "max positions"
     if "confidence below" in lowered:
         return "low confidence"
     if "no trade signal" in lowered:
@@ -104,18 +122,289 @@ def _log_trade_results(
     )
 
 
+def _safe_float(value: object | None) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed != parsed or parsed <= 0:
+        return None
+    return parsed
+
+
+def _strategy_levels_for_symbol(
+    strategy_report: StrategyReport | None,
+    symbol: str,
+) -> tuple[float | None, float | None, float | None]:
+    if strategy_report is None:
+        return None, None, None
+    for item in strategy_report.results:
+        if item.symbol.upper() == symbol.upper():
+            return item.entry_price, item.stop_loss, item.take_profit
+    return None, None, None
+
+
+def _resolve_entry_price(
+    symbol: str,
+    item: dict[str, Any],
+    latest_prices: dict[str, float],
+) -> float | None:
+    for key in ("entry", "entry_price"):
+        price = _safe_float(item.get(key))
+        if price is not None:
+            return price
+    return latest_prices.get(symbol.upper())
+
+
+def _levels_for_fallback(
+    symbol: str,
+    item: dict[str, Any],
+    *,
+    latest_prices: dict[str, float],
+    strategy_report: StrategyReport | None,
+) -> tuple[float, float, float] | None:
+    entry = _resolve_entry_price(symbol, item, latest_prices)
+    if entry is None:
+        return None
+
+    stop = _safe_float(item.get("stop")) or _safe_float(item.get("stop_loss"))
+    target = _safe_float(item.get("target")) or _safe_float(item.get("take_profit"))
+    if stop is not None and target is not None and stop < entry < target:
+        return entry, stop, target
+
+    strategy_entry, strategy_stop, strategy_target = _strategy_levels_for_symbol(
+        strategy_report,
+        symbol,
+    )
+    if (
+        strategy_entry is not None
+        and strategy_stop is not None
+        and strategy_target is not None
+        and strategy_stop < strategy_entry < strategy_target
+    ):
+        return float(strategy_entry), float(strategy_stop), float(strategy_target)
+
+    stop_loss = round(entry * 0.97, 4)
+    risk = entry - stop_loss
+    if risk <= 0:
+        return None
+    take_profit = round(entry + risk * 2.01, 4)
+    return entry, stop_loss, take_profit
+
+
+def _confidence_for_item(item: dict[str, Any]) -> int:
+    label = str(item.get("confidence_label_v2") or "").upper()
+    if label == "STRONG":
+        return 85
+    if label == "GOOD":
+        return 78
+    score = item.get("confidence_score_v2")
+    if score is not None:
+        try:
+            return max(0, min(100, int(float(score))))
+        except (TypeError, ValueError):
+            pass
+    return DEFAULT_MIN_CONFIDENCE_SCORE
+
+
+def _confirmation_is_supportive(item: dict[str, Any]) -> bool:
+    confirmation = str(item.get("confirmation") or "").upper()
+    return "GOOD" in confirmation or "STRONG" in confirmation
+
+
+def _fallback_priority_key(item: dict[str, Any]) -> tuple[int, int, int, int]:
+    rank = int(item.get("rank") or 999)
+    label = str(item.get("confidence_label_v2") or "").upper()
+    if label == "STRONG":
+        confidence_rank = 0
+    elif label == "GOOD":
+        confidence_rank = 1
+    elif label in {"MIXED", "WAIT"}:
+        confidence_rank = 3
+    else:
+        confidence_rank = 2
+
+    sector_label = str(item.get("sector_label") or "")
+    sector_penalty = 1 if sector_label in RISKY_SECTOR_LABELS else 0
+    confirmation_penalty = 0 if _confirmation_is_supportive(item) else 1
+    return (rank, confidence_rank, sector_penalty, confirmation_penalty)
+
+
+def _collect_fallback_candidates(
+    report_payload: dict[str, Any] | None,
+    *,
+    limit: int = DEFAULT_MAX_TRADES_PER_RUN,
+) -> list[dict[str, Any]]:
+    if not report_payload:
+        return []
+
+    items = resolve_opportunity_items(report_payload, limit=limit, mode="opportunities")
+    ranked = sorted(items, key=_fallback_priority_key)
+    return ranked[:limit]
+
+
+def _execute_best_ideas_fallback(
+    *,
+    portfolio: VirtualPortfolio,
+    journal: TradeJournal,
+    report_payload: dict[str, Any],
+    latest_prices: dict[str, float],
+    strategy_report: StrategyReport | None,
+    max_trades_per_run: int,
+    min_confidence_score: int,
+) -> tuple[int, int, int]:
+    """Open experimental paper entries from report best ideas when BUY_SETUP is empty."""
+    candidates = _collect_fallback_candidates(
+        report_payload,
+        limit=max(max_trades_per_run * 2, DEFAULT_MAX_TRADES_PER_RUN),
+    )
+    best_ideas = (report_payload.get("executive_summary") or {}).get("best_ideas") or []
+    logger.info(
+        "Paper entry fallback activated: buy_setups=0 best_ideas=%s candidates=%s",
+        len(best_ideas),
+        len(candidates),
+    )
+
+    if not candidates:
+        return 0, 0, 0
+
+    risk_manager = RiskManager()
+    opened_count = 0
+    skipped_count = 0
+    rejected_count = 0
+    attempted = 0
+
+    for item in candidates:
+        if attempted >= max_trades_per_run:
+            break
+
+        symbol = str(item.get("symbol") or "").strip().upper()
+        if not symbol:
+            skipped_count += 1
+            continue
+
+        if symbol in portfolio.positions:
+            logger.info(
+                "Paper entry fallback skipped: %s reason=already open",
+                symbol,
+            )
+            skipped_count += 1
+            continue
+
+        if len(portfolio.positions) >= settings.MAX_OPEN_POSITIONS:
+            logger.info(
+                "Paper entry fallback skipped: %s reason=max positions",
+                symbol,
+            )
+            skipped_count += 1
+            continue
+
+        levels = _levels_for_fallback(
+            symbol,
+            item,
+            latest_prices=latest_prices,
+            strategy_report=strategy_report,
+        )
+        if levels is None:
+            logger.info(
+                "Paper entry fallback skipped: %s reason=missing price",
+                symbol,
+            )
+            skipped_count += 1
+            continue
+
+        entry_price, stop_loss, take_profit = levels
+        confidence_score = _confidence_for_item(item)
+        if confidence_score < min_confidence_score:
+            logger.info(
+                "Paper entry fallback skipped: %s reason=low confidence",
+                symbol,
+            )
+            skipped_count += 1
+            continue
+
+        signal = TradeSignal(
+            symbol=symbol,
+            signal_type=SignalType.BUY_SETUP,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            confidence_score=confidence_score,
+            reasons=[
+                f"BEST_IDEAS_FALLBACK from {item.get('source', 'report')}",
+            ],
+        )
+        equity = portfolio.get_snapshot().equity
+        risk_decision = risk_manager.evaluate(signal, equity)
+        if not risk_decision.approved:
+            reason = ", ".join(risk_decision.rejection_reasons) or "risk rejected"
+            logger.info(
+                "Paper entry fallback skipped: %s reason=%s",
+                symbol,
+                _normalize_skip_log_reason(reason),
+            )
+            rejected_count += 1
+            continue
+
+        attempted += 1
+        try:
+            trade = portfolio.open_trade(
+                symbol=symbol,
+                side=TradeSide.BUY,
+                quantity=risk_decision.quantity,
+                entry_price=entry_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                reason=SOURCE_BEST_IDEAS_FALLBACK,
+                notes=FALLBACK_TRADE_NOTE,
+            )
+        except PortfolioError as error:
+            logger.info(
+                "Paper entry fallback skipped: %s reason=%s",
+                symbol,
+                _normalize_skip_log_reason(str(error)),
+            )
+            rejected_count += 1
+            continue
+
+        journal.append_trade(trade)
+        opened_count += 1
+        value = trade.quantity * trade.entry_price
+        logger.info(
+            "Paper entry opened from BEST_IDEAS_FALLBACK: %s price=%s qty=%s value=%s",
+            symbol,
+            trade.entry_price,
+            trade.quantity,
+            value,
+        )
+
+    logger.info(
+        "Paper entry fallback completed: opened=%s skipped=%s rejected=%s",
+        opened_count,
+        skipped_count,
+        rejected_count,
+    )
+    return opened_count, skipped_count, rejected_count
+
+
 def execute_paper_entries_after_report(
     strategy_report: StrategyReport,
     *,
+    report_payload: dict[str, Any] | None = None,
+    latest_prices: dict[str, float] | None = None,
+    full_strategy_report: StrategyReport | None = None,
     max_trades_per_run: int = DEFAULT_MAX_TRADES_PER_RUN,
     min_confidence_score: int = DEFAULT_MIN_CONFIDENCE_SCORE,
     ignore_market_hours: bool = False,
     market_session: EgxMarketSession | None = None,
 ) -> PaperEntryExecutionResult:
-    """Evaluate BUY_SETUP strategy signals and open paper trades when market is OPEN."""
+    """Evaluate BUY_SETUP signals, then best-ideas fallback when BUY_SETUP is empty."""
     session = market_session or detect_egx_market_session()
     market_status = session.session_status.value
     buy_setups = list(strategy_report.buy_setups)
+    price_lookup = latest_prices or {}
 
     hydrate_local_storage_from_cloud()
     portfolio = VirtualPortfolio()
@@ -133,41 +422,92 @@ def execute_paper_entries_after_report(
             skipped_count=len(buy_setups),
             rejected_count=0,
             skip_reason=f"market={market_status}",
+            execution_source=SOURCE_NONE,
         )
 
-    trader = LivePaperTrader(
+    if buy_setups:
+        trader = LivePaperTrader(
+            portfolio=portfolio,
+            trade_journal=journal,
+            risk_manager=RiskManager(),
+            max_trades_per_run=max_trades_per_run,
+            min_confidence_score=min_confidence_score,
+            ignore_market_hours=ignore_market_hours,
+            market_session=session,
+        )
+        trade_report = trader.trade_from_strategy_report(strategy_report)
+        _log_trade_results(
+            market_status=market_status,
+            buy_setups_count=len(buy_setups),
+            open_positions_count=open_positions_count,
+            trade_report=trade_report,
+        )
+
+        if trade_report.opened_count > 0:
+            sync_local_storage_to_cloud()
+
+        skip_reason = None
+        if trade_report.opened_count == 0:
+            skip_reason = f"opened=0 skipped={trade_report.skipped_count}"
+
+        return PaperEntryExecutionResult(
+            checked=True,
+            market_status=market_status,
+            buy_setups_count=len(buy_setups),
+            open_positions_count=open_positions_count,
+            opened_count=trade_report.opened_count,
+            skipped_count=trade_report.skipped_count,
+            rejected_count=trade_report.rejected_count,
+            skip_reason=skip_reason,
+            execution_source=SOURCE_BUY_SETUP,
+            fallback_used=False,
+        )
+
+    fallback_candidates = _collect_fallback_candidates(report_payload, limit=max_trades_per_run)
+    if not report_payload or not fallback_candidates:
+        return PaperEntryExecutionResult(
+            checked=True,
+            market_status=market_status,
+            buy_setups_count=0,
+            open_positions_count=open_positions_count,
+            opened_count=0,
+            skipped_count=0,
+            rejected_count=0,
+            skip_reason="no_buy_setups_or_fallback_candidates",
+            execution_source=SOURCE_NONE,
+            fallback_used=False,
+            fallback_candidates_count=len(fallback_candidates),
+        )
+
+    opened_count, skipped_count, rejected_count = _execute_best_ideas_fallback(
         portfolio=portfolio,
-        trade_journal=journal,
-        risk_manager=RiskManager(),
+        journal=journal,
+        report_payload=report_payload,
+        latest_prices=price_lookup,
+        strategy_report=full_strategy_report or strategy_report,
         max_trades_per_run=max_trades_per_run,
         min_confidence_score=min_confidence_score,
-        ignore_market_hours=ignore_market_hours,
-        market_session=session,
-    )
-    trade_report = trader.trade_from_strategy_report(strategy_report)
-    _log_trade_results(
-        market_status=market_status,
-        buy_setups_count=len(buy_setups),
-        open_positions_count=open_positions_count,
-        trade_report=trade_report,
     )
 
-    if trade_report.opened_count > 0:
+    if opened_count > 0:
         sync_local_storage_to_cloud()
 
     skip_reason = None
-    if trade_report.opened_count == 0 and buy_setups:
-        skip_reason = f"opened=0 skipped={trade_report.skipped_count}"
+    if opened_count == 0:
+        skip_reason = f"fallback_opened=0 skipped={skipped_count}"
 
     return PaperEntryExecutionResult(
         checked=True,
         market_status=market_status,
-        buy_setups_count=len(buy_setups),
+        buy_setups_count=0,
         open_positions_count=open_positions_count,
-        opened_count=trade_report.opened_count,
-        skipped_count=trade_report.skipped_count,
-        rejected_count=trade_report.rejected_count,
+        opened_count=opened_count,
+        skipped_count=skipped_count,
+        rejected_count=rejected_count,
         skip_reason=skip_reason,
+        execution_source=SOURCE_BEST_IDEAS_FALLBACK,
+        fallback_used=True,
+        fallback_candidates_count=len(fallback_candidates),
     )
 
 

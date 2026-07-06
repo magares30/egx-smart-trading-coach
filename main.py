@@ -1823,6 +1823,9 @@ def print_and_save_daily_report(
 
     entry_execution = execute_paper_entries_after_report(
         _filtered_strategy_report(pipeline),
+        report_payload=report.model_dump(mode="json"),
+        latest_prices=build_latest_prices_from_snapshot(pipeline.live_snapshot),
+        full_strategy_report=pipeline.strategy_report,
         ignore_market_hours=ignore_market_hours,
     )
     patch_saved_report_with_entry_metadata(json_path, entry_execution)
