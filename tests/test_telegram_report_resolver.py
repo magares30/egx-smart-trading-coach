@@ -15,6 +15,7 @@ from core.telegram_bot import (
 from core.telegram_report_resolver import (
     EMPTY_OPPORTUNITIES_MESSAGE,
     is_market_closed,
+    resolve_executable_opportunity_items,
     resolve_next_session_items,
     resolve_opportunity_items,
     resolve_report_symbols,
@@ -221,3 +222,41 @@ def test_resolve_opportunity_items_no_duplicates() -> None:
 
     assert symbols.count("ELKA") == 1
     assert symbols[0] == "ELKA"
+
+
+def test_resolve_executable_opportunity_items_matches_opportunity_resolver() -> None:
+    payload = _open_market_payload()
+    executable = resolve_executable_opportunity_items(payload, limit=5)
+    legacy = resolve_opportunity_items(payload, limit=5, mode="opportunities")
+
+    assert [item["symbol"] for item in executable] == [item["symbol"] for item in legacy]
+
+
+def test_executable_opportunity_order_prefers_decision_signals_over_best_ideas() -> None:
+    payload = {
+        "market_session": {"status": "OPEN"},
+        "executive_summary": {"best_ideas": ["CICH", "LCSW", "EBSC"]},
+        "decision_summary": {
+            "signals": [
+                {"symbol": "EBSC", "decision": "WATCH"},
+                {"symbol": "NHPS", "decision": "WATCH"},
+                {"symbol": "RAYA", "decision": "WATCH"},
+            ],
+            "watch_next_session": [],
+        },
+        "confidence_v2_summary": {
+            "available": True,
+            "strong": ["CICH", "LCSW"],
+            "good": [],
+            "mixed": [],
+            "weak": [],
+            "wait": [],
+        },
+        "sections": [],
+    }
+
+    symbols = [item["symbol"] for item in resolve_executable_opportunity_items(payload, limit=3)]
+
+    assert symbols == ["EBSC", "NHPS", "RAYA"]
+    assert "EBSC" in format_best_three(payload)
+    assert "NHPS" in format_best_three(payload)

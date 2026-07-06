@@ -235,6 +235,15 @@ def _append_symbol(
     )
 
 
+def resolve_executable_opportunity_items(
+    payload: dict[str, Any] | None,
+    *,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Single ranked executable opportunity list for Telegram and paper fallback."""
+    return _resolve_ranked_opportunity_items(payload, limit=limit, mode="opportunities")
+
+
 def resolve_opportunity_items(
     payload: dict[str, Any] | None,
     *,
@@ -242,6 +251,17 @@ def resolve_opportunity_items(
     mode: str = "opportunities",
 ) -> list[dict[str, Any]]:
     """Resolve ranked opportunity items, preferring structured JSON over parsed text."""
+    if mode == "opportunities":
+        return resolve_executable_opportunity_items(payload, limit=limit)
+    return _resolve_ranked_opportunity_items(payload, limit=limit, mode=mode)
+
+
+def _resolve_ranked_opportunity_items(
+    payload: dict[str, Any] | None,
+    *,
+    limit: int | None = None,
+    mode: str = "opportunities",
+) -> list[dict[str, Any]]:
     if payload is None:
         return []
 

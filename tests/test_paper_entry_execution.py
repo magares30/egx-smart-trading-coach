@@ -20,6 +20,7 @@ from core.paper_entry_execution import (
 )
 from core.portfolio import VirtualPortfolio
 from core.strategy import StrategyDecision, StrategyReport, StrategyResult
+from core.telegram_report_resolver import resolve_executable_opportunity_items
 from core.trade_journal import TradeJournal
 
 CAIRO = ZoneInfo("Africa/Cairo")
@@ -164,10 +165,95 @@ def test_execute_paper_entries_fallback_opens_from_best_ideas(tmp_storage: Path)
     assert result.fallback_used is True
     assert result.execution_source == SOURCE_BEST_IDEAS_FALLBACK
     assert result.opened_count == 1
+    assert result.candidate_symbols[0] == "UEGC"
+    assert result.opened_symbols == ["UEGC"]
     assert "UEGC" in VirtualPortfolio().positions
     trade = TradeJournal().trades[0]
     assert trade.reason == SOURCE_BEST_IDEAS_FALLBACK
     assert "BEST_IDEAS_FALLBACK" in trade.notes
+
+
+def test_fallback_attempts_same_order_as_telegram_opportunities(tmp_storage: Path) -> None:
+    portfolio = VirtualPortfolio()
+    portfolio.reset()
+    TradeJournal().clear()
+
+    payload = {
+        "market_session": {"status": "OPEN"},
+        "executive_summary": {"best_ideas": ["CICH", "LCSW", "EBSC"]},
+        "decision_summary": {
+            "signals": [
+                {"symbol": "EBSC", "decision": "WATCH"},
+                {"symbol": "NHPS", "decision": "WATCH"},
+                {"symbol": "RAYA", "decision": "WATCH"},
+            ],
+            "watch_next_session": [],
+        },
+        "confidence_v2_summary": {
+            "available": True,
+            "strong": ["CICH", "LCSW"],
+            "good": [],
+            "mixed": [],
+            "weak": [],
+            "wait": [],
+        },
+        "sections": [],
+    }
+    telegram_top3 = [
+        item["symbol"]
+        for item in resolve_executable_opportunity_items(payload, limit=3)
+    ]
+    assert telegram_top3 == ["EBSC", "NHPS", "RAYA"]
+
+    result = execute_paper_entries_after_report(
+        _strategy_report(),
+        report_payload=payload,
+        latest_prices={
+            "EBSC": 10.0,
+            "NHPS": 8.0,
+            "RAYA": 5.0,
+            "CICH": 12.0,
+            "LCSW": 7.0,
+        },
+        market_session=_open_session(),
+        max_trades_per_run=3,
+    )
+
+    assert result.candidate_symbols[:3] == telegram_top3
+    assert result.attempted_symbols[:3] == telegram_top3
+    assert result.opened_symbols == telegram_top3
+
+
+def test_fallback_records_skip_reason_for_visible_symbol(tmp_storage: Path) -> None:
+    portfolio = VirtualPortfolio()
+    portfolio.reset()
+    TradeJournal().clear()
+
+    payload = {
+        "market_session": {"status": "OPEN"},
+        "executive_summary": {"best_ideas": ["CICH"]},
+        "decision_summary": {
+            "signals": [
+                {"symbol": "EBSC", "decision": "WATCH"},
+                {"symbol": "NHPS", "decision": "WATCH"},
+            ],
+            "watch_next_session": [],
+        },
+        "confidence_v2_summary": {"available": False},
+        "sections": [],
+    }
+
+    result = execute_paper_entries_after_report(
+        _strategy_report(),
+        report_payload=payload,
+        latest_prices={"EBSC": 10.0},
+        market_session=_open_session(),
+        max_trades_per_run=2,
+    )
+
+    assert result.candidate_symbols[:2] == ["EBSC", "NHPS"]
+    assert result.opened_symbols == ["EBSC"]
+    assert result.skipped_symbols_with_reasons["NHPS"] == "missing price"
 
 
 def test_execute_paper_entries_buy_setup_blocks_fallback(tmp_storage: Path) -> None:
@@ -242,6 +328,10 @@ def test_patch_saved_report_with_entry_metadata(tmp_path: Path) -> None:
         execution_source=SOURCE_BUY_SETUP,
         fallback_used=False,
         fallback_candidates_count=0,
+        candidate_symbols=["FWRY", "LCSW"],
+        attempted_symbols=["FWRY"],
+        opened_symbols=["FWRY"],
+        skipped_symbols_with_reasons={"LCSW": "already open"},
     )
     patch_saved_report_with_entry_metadata(json_path, execution)
 
@@ -252,3 +342,9 @@ def test_patch_saved_report_with_entry_metadata(tmp_path: Path) -> None:
     assert metadata["paper_entry_execution_buy_setups_count"] == 2
     assert metadata["paper_entry_execution_source"] == SOURCE_BUY_SETUP
     assert metadata["paper_entry_execution_fallback_used"] is False
+    assert metadata["paper_entry_execution_candidate_symbols"] == ["FWRY", "LCSW"]
+    assert metadata["paper_entry_execution_attempted_symbols"] == ["FWRY"]
+    assert metadata["paper_entry_execution_opened_symbols"] == ["FWRY"]
+    assert metadata["paper_entry_execution_skipped_symbols_with_reasons"] == {
+        "LCSW": "already open",
+    }

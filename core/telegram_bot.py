@@ -52,6 +52,7 @@ from core.telegram_report_resolver import (
     format_sector_intelligence_snippet,
     is_market_closed,
     resolve_next_session_items,
+    resolve_executable_opportunity_items,
     resolve_opportunity_items,
     resolve_report_symbols,
 )
@@ -466,7 +467,7 @@ def format_best_opportunities(payload: dict[str, Any] | None, *, limit: int = 5)
     if payload is None:
         return NO_REPORT_MESSAGE
 
-    items = resolve_opportunity_items(payload, limit=limit, mode="opportunities")
+    items = resolve_executable_opportunity_items(payload, limit=limit)
     if not items:
         return EMPTY_OPPORTUNITIES_MESSAGE
 
@@ -534,7 +535,7 @@ def format_best_three(payload: dict[str, Any] | None) -> str:
     if payload is None:
         return NO_REPORT_MESSAGE
 
-    items = resolve_opportunity_items(payload, limit=3, mode="opportunities")
+    items = resolve_executable_opportunity_items(payload, limit=3)
     if not items:
         return EMPTY_OPPORTUNITIES_MESSAGE
 
