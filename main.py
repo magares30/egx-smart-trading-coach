@@ -1791,6 +1791,29 @@ def print_and_save_daily_report(
 ) -> int:
     """Build, print, and save a daily report from live scan results."""
     print_live_scan_header(pipeline)
+
+    # Close TP/SL paper trades before learning/report so CLOSED history is current.
+    from core.paper_exit_execution import execute_paper_exits_before_report
+
+    exit_execution = execute_paper_exits_before_report(
+        pipeline.live_snapshot,
+        ignore_market_hours=ignore_market_hours,
+    )
+    if exit_execution.skip_reason:
+        print(
+            "Paper exits skipped: "
+            f"{exit_execution.skip_reason} | market={exit_execution.market_status}"
+        )
+    else:
+        print(
+            "Paper exits: "
+            f"checked={exit_execution.open_trades_checked} "
+            f"closed={exit_execution.closed_count} "
+            f"held={exit_execution.held_count} "
+            f"errors={exit_execution.error_count}"
+        )
+    print()
+
     report = DailyReportBuilder().build_from_live_scan(
         pipeline.live_snapshot,
         pipeline.mood_result,
