@@ -210,6 +210,28 @@ def _log_report_failure_diagnostics(
     )
 
 
+def _relay_paper_exit_stdout_diagnostics(stdout: str | None) -> None:
+    """Forward paper-exit diagnostic lines from report subprocess stdout to Cloud Run logs."""
+    if not stdout:
+        logger.info("Paper exit hook: no report subprocess stdout to inspect")
+        return
+
+    matched = [
+        line.strip()
+        for line in stdout.splitlines()
+        if "Paper exit" in line or "PAPER_EXIT" in line
+    ]
+    if not matched:
+        logger.info(
+            "Paper exit hook: no Paper exit lines found in report subprocess stdout"
+        )
+        return
+
+    logger.info("Paper exit hook: relaying %s diagnostic line(s) from report subprocess", len(matched))
+    for line in matched:
+        logger.info("%s", line)
+
+
 def run_report_once(
     *,
     timeout_seconds: int = DEFAULT_REPORT_TIMEOUT_SECONDS,
@@ -234,6 +256,7 @@ def run_report_once(
     except subprocess.TimeoutExpired as exc:
         stdout_raw = exc.stdout if isinstance(exc.stdout, str) else None
         stderr_raw = exc.stderr if isinstance(exc.stderr, str) else None
+        _relay_paper_exit_stdout_diagnostics(stdout_raw)
         _log_report_failure_diagnostics(
             command=report_command,
             returncode=None,
@@ -266,6 +289,8 @@ def run_report_once(
     stdout_tail = _prepare_output_tail(completed.stdout)
     stderr_tail = _prepare_output_tail(completed.stderr)
     success = completed.returncode == 0 and latest_report_path is not None
+
+    _relay_paper_exit_stdout_diagnostics(completed.stdout)
 
     if success:
         logger.info("Cloud report command completed successfully.")

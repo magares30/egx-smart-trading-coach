@@ -1793,16 +1793,25 @@ def print_and_save_daily_report(
     print_live_scan_header(pipeline)
 
     # Close TP/SL paper trades before learning/report so CLOSED history is current.
+    # Temporary diagnostics: print() reaches Cloud Run via cloud_report_runner stdout relay.
+    print("Paper exit hook: before execute_paper_exits_before_report", flush=True)
     from core.paper_exit_execution import execute_paper_exits_before_report
 
     exit_execution = execute_paper_exits_before_report(
         pipeline.live_snapshot,
         ignore_market_hours=ignore_market_hours,
     )
+    print(
+        "Paper exit hook: after execute_paper_exits_before_report "
+        f"closed={exit_execution.closed_count} held={exit_execution.held_count} "
+        f"skip_reason={exit_execution.skip_reason}",
+        flush=True,
+    )
     if exit_execution.skip_reason:
         print(
             "Paper exits skipped: "
-            f"{exit_execution.skip_reason} | market={exit_execution.market_status}"
+            f"{exit_execution.skip_reason} | market={exit_execution.market_status}",
+            flush=True,
         )
     else:
         print(
@@ -1810,7 +1819,8 @@ def print_and_save_daily_report(
             f"checked={exit_execution.open_trades_checked} "
             f"closed={exit_execution.closed_count} "
             f"held={exit_execution.held_count} "
-            f"errors={exit_execution.error_count}"
+            f"errors={exit_execution.error_count}",
+            flush=True,
         )
     print()
 
