@@ -93,6 +93,9 @@ def execute_paper_exits_before_report(
     market_session: EgxMarketSession | None = None,
 ) -> PaperExitExecutionResult:
     """Close open paper trades on TP/SL using LivePaperMonitor before report build."""
+    # Temporary diagnostic logs — verify Cloud Run actually enters this path.
+    logger.info("Paper exit execution started")
+
     session = market_session or detect_egx_market_session(
         ignore_market_hours=ignore_market_hours,
     )
@@ -104,7 +107,10 @@ def execute_paper_exits_before_report(
     open_before = len(portfolio.get_open_trades())
 
     if live_snapshot is None:
-        logger.info("Paper exit skipped: missing live snapshot")
+        logger.info(
+            "Paper exit execution skipped reason=%s",
+            "missing_live_snapshot",
+        )
         return _empty_result(
             market_status=market_status,
             skip_reason="missing_live_snapshot",
@@ -112,15 +118,22 @@ def execute_paper_exits_before_report(
         )
 
     if not ignore_market_hours and not session.is_open_for_new_entries:
-        logger.info("Paper exit skipped: market=%s", market_status)
+        skip_reason = f"market={market_status}"
+        logger.info("Paper exit execution skipped reason=%s", skip_reason)
         return _empty_result(
             market_status=market_status,
-            skip_reason=f"market={market_status}",
+            skip_reason=skip_reason,
             open_trades_checked=open_before,
         )
 
+    logger.info("Paper exit monitor running")
     monitor = LivePaperMonitor(portfolio=portfolio, trade_journal=journal)
     report = monitor.monitor_from_live_snapshot(live_snapshot)
+    logger.info(
+        "Paper exit monitor completed closed=%s held=%s",
+        report.closed_count,
+        report.held_count,
+    )
     _log_monitor_report(report)
 
     if report.closed_count > 0:
