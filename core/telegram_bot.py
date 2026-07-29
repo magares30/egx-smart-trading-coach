@@ -1463,6 +1463,17 @@ def run_telegram_bot() -> int:
                         message,
                         reply_markup=build_main_menu(),
                     )
+                    from core.paper_exit_execution import format_paper_exit_telegram_alert
+
+                    exit_alert = format_paper_exit_telegram_alert(
+                        (latest_payload or {}).get("report_metadata") or {}
+                    )
+                    if exit_alert:
+                        await bot.send_message(
+                            chat_id,
+                            exit_alert,
+                            reply_markup=build_main_menu(),
+                        )
                 except Exception:
                     logger.exception("Cloud report background task failed.")
                     await bot.send_message(

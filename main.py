@@ -1853,6 +1853,9 @@ def print_and_save_daily_report(
         execute_paper_entries_after_report,
         patch_saved_report_with_entry_metadata,
     )
+    from core.paper_exit_execution import patch_saved_report_with_exit_metadata
+
+    patch_saved_report_with_exit_metadata(json_path, exit_execution)
 
     entry_execution = execute_paper_entries_after_report(
         _filtered_strategy_report(pipeline),

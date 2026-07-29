@@ -131,10 +131,40 @@ def test_execute_paper_exits_closes_on_take_profit(tmp_storage: Path) -> None:
 
     assert result.closed_count == 1
     assert result.skip_reason is None
+    assert result.closed_symbols == ["FWRY"]
+    assert result.closed_trades[0]["reason"] == "TAKE_PROFIT"
     closed = TradeJournal().trades[0]
     assert closed.status == TradeStatus.CLOSED
     assert closed.pnl is not None
     assert "FWRY" not in VirtualPortfolio().positions
+
+
+def test_format_paper_exit_telegram_alert_when_closed() -> None:
+    from core.paper_exit_execution import format_paper_exit_telegram_alert
+
+    text = format_paper_exit_telegram_alert(
+        {
+            "paper_exit_execution_closed_count": 1,
+            "paper_exit_execution_closed_trades": [
+                {
+                    "symbol": "FWRY",
+                    "reason": "TAKE_PROFIT",
+                    "pnl": 38.0,
+                    "pnl_percent": 6.09,
+                }
+            ],
+        }
+    )
+    assert text is not None
+    assert "إغلاق ورقي تلقائي" in text
+    assert "FWRY" in text
+    assert "TAKE_PROFIT" in text
+
+
+def test_format_paper_exit_telegram_alert_when_none_closed() -> None:
+    from core.paper_exit_execution import format_paper_exit_telegram_alert
+
+    assert format_paper_exit_telegram_alert({"paper_exit_execution_closed_count": 0}) is None
 
 
 def test_execute_paper_exits_holds_when_levels_not_hit(tmp_storage: Path) -> None:

@@ -177,6 +177,12 @@ class MarketHoursAutoRefreshWorker:
         if result.success:
             self.mark_success(decision, now=now)
             logger.info(AUTO_REFRESH_SUCCESS_LOG)
+            try:
+                from core.paper_exit_notify import notify_paper_closes_from_latest_report
+
+                notify_paper_closes_from_latest_report()
+            except Exception:
+                logger.exception("Paper close notify after auto refresh failed.")
             return decision
 
         logger.warning(AUTO_REFRESH_FAILED_LOG)
